@@ -38,6 +38,29 @@ final class WebController: NSObject, ObservableObject, WKNavigationDelegate, WKU
 
     func load(_ url: URL) { webView.load(URLRequest(url: url)) }
 
+    /// The specific page the user asked for. If the site detours through its login page
+    /// (Daily Star does, then lands on page 1), we go back to this page afterwards.
+    private var target: URL?
+
+    func open(_ url: URL) {
+        target = url
+        load(url)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let target, let current = webView.url else { return }
+        let page = URLComponents(url: target, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "pgid" }?.value
+        guard let page else { self.target = nil; return }
+        if current.absoluteString.contains("pgid=\(page)") {
+            self.target = nil  // arrived
+        } else if current.host == target.host, !current.path.lowercased().contains("login") {
+            // Back on the reader after signing in, but on the wrong page.
+            self.target = nil
+            load(target)
+        }
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         if let url = navigationAction.request.url, ["tel", "mailto", "sms"].contains(url.scheme?.lowercased() ?? "") {
             UIApplication.shared.open(url)
@@ -123,7 +146,7 @@ struct ReaderView: View {
                     } label: { Image(systemName: "ellipsis.circle") }
                 }
             }
-            .onAppear { if web.webView.url == nil { web.load(paper.editionURL(for: date, pageId: pageId)) } }
+            .onAppear { if web.webView.url == nil { web.open(paper.editionURL(for: date, pageId: pageId)) } }
             .sheet(item: $summary) { PageSummaryView(paper: paper, capture: $0) }
             .sheet(item: $shareItems) { ActivityView(items: $0.items) }
             .sheet(item: $aiSheet) { AIChatSheetView(sheet: $0) }
