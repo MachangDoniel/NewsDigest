@@ -96,9 +96,12 @@ struct AnyEncodable: Encodable {
 enum Prompts {
     static let languageKey = "digestLanguage"
 
-    static var languageRule: String {
-        switch UserDefaults.standard.string(forKey: languageKey) ?? "en" {
-        case "bn": "Write everything in Bangla (বাংলা)."
+    static func languageRule(for paper: String) -> String {
+        let setting = UserDefaults.standard.string(forKey: languageKey) ?? "auto"
+        // "auto": each paper in its own language.
+        let lang = setting == "auto" ? (paper == Paper.prothomalo.name ? "bn" : "en") : setting
+        return switch lang {
+        case "bn": "Write everything (headlines, bullets, key facts, MCQs) in Bangla (বাংলা). Keep proper names in their usual Bangla spelling."
         case "both": "Write the headline in English followed by the Bangla headline in brackets; write bullets and facts in English."
         default: "Write everything in clear, simple English, even when the page is in Bangla."
         }
@@ -118,7 +121,7 @@ enum Prompts {
 
         Categories: \(Category.all.joined(separator: ", ")).
         Write up to 3 MCQs with 4 options each. The answer must exactly equal one of the options.
-        \(languageRule)
+        \(languageRule(for: paper))
         """
     }
 

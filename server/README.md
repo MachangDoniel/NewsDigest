@@ -41,7 +41,7 @@ Optional repository **variables** (not secrets):
 - `GEMINI_MODEL` (default `gemini-3.8-flash`)
 - `GEMINI_FALLBACK_MODELS` (default `gemini-3.7-flash,gemini-3.5-flash-lite`), tried when the main model is overloaded
 - `GROQ_FALLBACK` (default off). Groq's image model misreads small Bangla print and invents headlines
-- `DIGEST_LANG`: `en`, `bn` or `both`
+- `DIGEST_LANG`: `auto` (default; each paper in its own language), or `en`, `bn` or `both`
 
 ### 4. First run
 Go to GitHub → **Actions → Daily digest → Run workflow**. After that it runs automatically at 06:00, 08:00 and 10:00 Dhaka time. The later runs only retry papers that aren't done yet.

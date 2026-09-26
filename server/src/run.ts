@@ -31,9 +31,10 @@ const FORCE = args.includes("--force");
 const MAX_PAGES = Number(flag("max-pages") ?? Infinity);
 const ONLY = flag("paper") as PaperId | undefined;
 
-const PAPERS: { id: PaperId; name: string; capture: (b: Browser) => Promise<PageImage[]> }[] = [
-  { id: "dailystar", name: "The Daily Star", capture: captureDailyStar },
-  { id: "prothomalo", name: "Prothom Alo", capture: captureProthomAlo },
+// lang: each paper is summarized in its own language unless DIGEST_LANG overrides it.
+const PAPERS: { id: PaperId; name: string; lang: DigestLang; capture: (b: Browser) => Promise<PageImage[]> }[] = [
+  { id: "dailystar", name: "The Daily Star", lang: "en", capture: captureDailyStar },
+  { id: "prothomalo", name: "Prothom Alo", lang: "bn", capture: captureProthomAlo },
 ];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -84,13 +85,13 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], date: 
 
 async function main() {
   const date = dhakaDate().iso;
-  const lang = (process.env.DIGEST_LANG as DigestLang) || "en";
+  const override = process.env.DIGEST_LANG as DigestLang | "auto" | undefined;
   const browser = await chromium.launch();
   let failures = 0;
   try {
     for (const paper of PAPERS.filter((p) => !ONLY || p.id === ONLY)) {
       try {
-        await runPaper(browser, paper, date, lang);
+        await runPaper(browser, paper, date, override && override !== "auto" ? override : paper.lang);
       } catch (e) {
         const state = stateFor(e);
         const message = (e as Error).message;

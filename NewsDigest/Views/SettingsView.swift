@@ -8,7 +8,7 @@ struct SettingsView: View {
 
     @State private var geminiKey = ""
     @AppStorage(GeminiClient.modelDefaultsKey) private var model = GeminiClient.defaultModel
-    @AppStorage(Prompts.languageKey) private var language = "en"
+    @AppStorage(Prompts.languageKey) private var language = "auto"
 
     var body: some View {
         NavigationStack {
@@ -59,6 +59,7 @@ struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Picker("Summary language", selection: $language) {
+                        Text("Same as paper").tag("auto")
                         Text("English").tag("en")
                         Text("বাংলা").tag("bn")
                         Text("Both").tag("both")

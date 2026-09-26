@@ -48,7 +48,7 @@ enum Paper: String, CaseIterable, Identifiable, Codable {
         f.dateFormat = "dd/MM/yyyy"
         let d = f.string(from: date)
         switch self {
-        case .dailystar: return URL(string: "https://epaper.thedailystar.net/Home/DIndex?eid=1&edate=\(d)")!
+        case .dailystar: return URL(string: "https://epaper.thedailystar.net/DhakaEdition?eid=1&edate=\(d)")!
         case .prothomalo: return URL(string: "https://epaper.prothomalo.com/Home/DIndex?eid=1&edate=\(d)")!
         }
     }

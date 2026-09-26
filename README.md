@@ -97,7 +97,7 @@ Run on a simulator or device. Then, in the app's **Settings**:
 | `DAILYSTAR_EMAIL`, `DAILYSTAR_PASSWORD` | secret | Daily Star e-paper login |
 | `PROTHOMALO_EMAIL`, `PROTHOMALO_PASSWORD` | secret | Prothom Alo e-paper login |
 | `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS` | variable | Override the model chain |
-| `DIGEST_LANG` | variable | `en`, `bn` or `both` |
+| `DIGEST_LANG` | variable | `auto` (default: Daily Star in English, Prothom Alo in Bangla), or force `en`, `bn` or `both` |
 
 ## Limitations
 

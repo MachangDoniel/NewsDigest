@@ -4,7 +4,7 @@ export type DigestLang = "en" | "bn" | "both";
 
 const LANG_RULE: Record<DigestLang, string> = {
   en: "Write everything in clear, simple English, even when the page is in Bangla.",
-  bn: "Write everything in Bangla (বাংলা).",
+  bn: "Write everything (headlines, bullets, key facts, MCQs) in Bangla (বাংলা), exactly as a Bangla newspaper would. Keep proper names in their usual Bangla spelling.",
   both: "Write the headline in English followed by the Bangla headline in brackets; write bullets and facts in English.",
 };
 
