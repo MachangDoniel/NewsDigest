@@ -51,7 +51,33 @@ enum PageCapture {
       if (a > bestArea) { bestArea = a; best = e; }
     }
     const pageId = (best && (best.getAttribute('pageid') || best.getAttribute('page_id'))) || new URLSearchParams(location.search).get('pgid');
-    if (!pageId) return null;
+    if (!pageId) {
+      // A single article (opened from a story box): use its ID if the address has one,
+      // otherwise the text on screen.
+      const org = (location.href.match(/orgid=([0-9a-z]+)/i) || [])[1];
+      if (org) {
+        const a = await fetch('/User/ShowArticleView?OrgId=' + org, { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.ok ? r.json() : null).catch(() => null);
+        const c = a && Array.isArray(a.StoryContent) ? a.StoryContent : [];
+        const strip = (h) => (new DOMParser().parseFromString(String(h || '').replace(/<\\/p>|<br\\s*\\/?>/gi, '\\n'), 'text/html').body.textContent || '').trim();
+        const headline = strip(c.flatMap(x => x.Headlines || []).join(' '));
+        const body = strip(c.map(x => x.Body || '').join('\\n'));
+        if (headline || body) return JSON.stringify({ pageNo: null, pageName: null, stories: [{ headline, body: body.slice(0, 6000), captions: [] }] });
+      }
+      // Article pages keep the full text in a text-view block even while showing the image view.
+      for (const sel of ['#txt_to_speech_body', '#textView', '#textview_a', '#body']) {
+        const el = document.querySelector(sel);
+        const t = el ? (el.textContent || '').replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n').trim() : '';
+        if (t.length > 300) {
+          const h = el.querySelector('h1, h2, h3, .headline, [class*=head]');
+          const headline = (h && h.textContent.trim()) || t.split('\\n')[0].slice(0, 160);
+          return JSON.stringify({ pageNo: null, pageName: null, stories: [{ headline, body: t.slice(0, 6000), captions: [] }] });
+        }
+      }
+      const heading = document.querySelector('h1, h2');
+      const text = (document.body.innerText || '').replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n').trim();
+      if (text.length < 300) return null;
+      return JSON.stringify({ pageNo: null, pageName: null, stories: [{ headline: (heading && heading.innerText.trim()) || document.title, body: text.slice(0, 6000), captions: [] }] });
+    }
     const pageNo = best && best.getAttribute('pageno');
     const pageName = best && best.getAttribute('pgname');
     const getJSON = (u) => fetch(u, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null);
@@ -101,8 +127,13 @@ enum PageCapture {
 
     @MainActor
     private static func pageText(_ webView: WKWebView) async -> PageText? {
-        guard let json = try? await webView.callAsyncJavaScript(storiesJS, contentWorld: .defaultClient) as? String,
-              let data = json.data(using: .utf8) else { return nil }
+        let json: String
+        do {
+            json = (try await webView.callAsyncJavaScript(storiesJS, contentWorld: .defaultClient) as? String) ?? ""
+        } catch {
+            return nil
+        }
+        guard let data = json.data(using: .utf8), !json.isEmpty else { return nil }
         return try? JSONDecoder().decode(PageText.self, from: data)
     }
 

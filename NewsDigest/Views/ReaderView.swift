@@ -70,9 +70,9 @@ final class WebController: NSObject, ObservableObject, WKNavigationDelegate, WKU
         decisionHandler(.allow)
     }
 
-    /// Only sign-in pages and the paper's own pages (e.g. an article opened from a story box)
-    /// may open as a pop-up sheet. Ads opening windows from other sites were knocking the
-    /// summary sheet off screen, so those are dropped.
+    /// Only sign-in pages open as a pop-up sheet; the paper's own windows open in place.
+    /// Ads opening windows from other sites were knocking the summary sheet off screen,
+    /// so those are dropped.
     private static let signInHosts = ["accounts.google.com", "facebook.com", "appleid.apple.com", "auth.prothomalo.com", "profile.thedailystar.net"]
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -80,7 +80,14 @@ final class WebController: NSObject, ObservableObject, WKNavigationDelegate, WKU
         let matches = { (h: String) in host == h || host.hasSuffix("." + h) }
         let isSignIn = Self.signInHosts.contains(where: matches)
         let isPaper = Paper.allCases.contains { $0.hosts.contains(where: matches) }
-        guard isSignIn || isPaper else { return nil }
+        // The paper's own windows (an article opened from a story box) open right here, like a
+        // normal link; the ◀ button returns to the page. Daily Star's article window closes
+        // itself when opened as a separate window.
+        if isPaper, !isSignIn {
+            webView.load(navigationAction.request)
+            return nil
+        }
+        guard isSignIn else { return nil }
         // Must use the passed-in configuration so the popup can talk back to its opener.
         let popup = WKWebView(frame: .zero, configuration: configuration)
         popup.uiDelegate = self
@@ -151,7 +158,7 @@ struct ReaderView: View {
                     NavigationStack {
                         WebViewHost(webView: popup)
                             .ignoresSafeArea(edges: .bottom)
-                            .navigationTitle(popup.url?.host?.contains("profile.") == true || popup.url?.host?.contains("auth.") == true ? "Sign in" : "Article")
+                            .navigationTitle("Sign in")
                             .navigationBarTitleDisplayMode(.inline)
                             .toolbar { Button("Close") { web.popup = nil } }
                     }
