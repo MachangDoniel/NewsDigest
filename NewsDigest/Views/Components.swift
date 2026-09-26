@@ -97,7 +97,7 @@ struct ItemCard: View {
     let saved: SavedItem
     var showDate = false
     var onOpenPage: ((SavedItem) -> Void)?
-    @State private var chatURL: URL?
+    @State private var aiSheet: AIChatSheet?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -171,11 +171,10 @@ struct ItemCard: View {
                     }
                 }
                 Spacer()
-                Button { chatURL = AskChatGPT.url(AskChatGPT.prompt(for: saved)) } label: {
-                    Label("Ask ChatGPT", systemImage: "bubble.left.and.text.bubble.right")
-                        .labelStyle(.iconOnly)
+                AskAIMenu(onPick: { aiSheet = $0.open(AskPrompts.story(saved)) }) {
+                    Image(systemName: "bubble.left.and.text.bubble.right")
                 }
-                .accessibilityLabel("Ask ChatGPT about this story")
+                .accessibilityLabel("Ask an AI about this story")
                 ShareLink(item: shareText) { Image(systemName: "square.and.arrow.up") }
                 Button { store.toggleBookmark(saved) } label: {
                     Image(systemName: store.isBookmarked(saved) ? "bookmark.fill" : "bookmark")
@@ -188,7 +187,7 @@ struct ItemCard: View {
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .sheet(item: $chatURL) { SafariSheet(url: $0).ignoresSafeArea() }
+        .sheet(item: $aiSheet) { AIChatSheetView(sheet: $0) }
     }
 
     private var shareText: String {
@@ -245,7 +244,7 @@ struct McqCard: View {
     /// Pass a binding to track answers outside (Practice tab score); otherwise kept locally.
     var picked: Binding<String?>? = nil
     @State private var localPick: String?
-    @State private var chatURL: URL?
+    @State private var aiSheet: AIChatSheet?
 
     private var pick: String? { picked?.wrappedValue ?? localPick }
     private func choose(_ option: String) {
@@ -282,11 +281,10 @@ struct McqCard: View {
                 .disabled(pick != nil)
             }
             if pick != nil {
-                Button { chatURL = AskChatGPT.url(AskChatGPT.prompt(for: mcq, paper: paper)) } label: {
-                    Label("Explain with ChatGPT", systemImage: "bubble.left.and.text.bubble.right")
+                AskAIMenu(onPick: { aiSheet = $0.open(AskPrompts.mcq(mcq, paper: paper)) }) {
+                    Label("Explain with ChatGPT, Gemini…", systemImage: "bubble.left.and.text.bubble.right")
                         .font(.caption.weight(.semibold))
                 }
-                .buttonStyle(.plain)
                 .foregroundStyle(Color.accentColor)
                 .transition(.opacity)
             }
@@ -296,7 +294,7 @@ struct McqCard: View {
         .sensoryFeedback(trigger: pick) { _, new in
             new == nil ? nil : (new == mcq.answer ? .success : .error)
         }
-        .sheet(item: $chatURL) { SafariSheet(url: $0).ignoresSafeArea() }
+        .sheet(item: $aiSheet) { AIChatSheetView(sheet: $0) }
     }
 
     private func background(for option: String) -> Color {

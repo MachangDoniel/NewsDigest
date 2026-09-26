@@ -91,6 +91,7 @@ struct ReaderView: View {
     @State private var capturing = false
     @State private var error: String?
     @State private var shareItems: ShareItems?
+    @State private var aiSheet: AIChatSheet?
 
     var body: some View {
         NavigationStack {
@@ -118,13 +119,14 @@ struct ReaderView: View {
                         Button { web.webView.reload() } label: { Label("Reload", systemImage: "arrow.clockwise") }
                         Button { web.load(paper.editionURL(for: date)) } label: { Label("Go to edition", systemImage: "newspaper") }
                         Divider()
-                        Button { Task { await shareToAI() } } label: { Label("Send page to ChatGPT / Gemini", systemImage: "square.and.arrow.up") }
+                        Button { Task { await shareToAI() } } label: { Label("Share page…", systemImage: "square.and.arrow.up") }
                     } label: { Image(systemName: "ellipsis.circle") }
                 }
             }
             .onAppear { if web.webView.url == nil { web.load(paper.editionURL(for: date, pageId: pageId)) } }
             .sheet(item: $summary) { PageSummaryView(paper: paper, capture: $0) }
             .sheet(item: $shareItems) { ActivityView(items: $0.items) }
+            .sheet(item: $aiSheet) { AIChatSheetView(sheet: $0) }
             .sheet(isPresented: Binding(get: { web.popup != nil }, set: { if !$0 { web.popup = nil } })) {
                 if let popup = web.popup {
                     NavigationStack {
@@ -142,13 +144,15 @@ struct ReaderView: View {
         }
     }
 
+    /// "Ask" menu: the in-app BCS summary, or open ChatGPT / Gemini / Claude / … with this page's text.
     private var summarizeButton: some View {
-        Button {
-            Task { await capture() }
-        } label: {
+        AskAIMenu(
+            onSummarize: { Task { await capture() } },
+            onPick: { app in Task { await ask(app) } }
+        ) {
             HStack(spacing: 8) {
                 if capturing { ProgressView().tint(.white) } else { Image(systemName: "sparkles") }
-                Text("Summarize").fontWeight(.semibold)
+                Text("Ask").fontWeight(.semibold)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 13)
@@ -160,8 +164,22 @@ struct ReaderView: View {
         .padding(20)
     }
 
+    /// Opens an AI app with the page's article text (or copies the page image when there's no text).
+    private func ask(_ app: AIApp) async {
+        capturing = true
+        defer { capturing = false }
+        do {
+            let page = try await PageCapture.capture(web.webView)
+            let sheet = app.open(AskPrompts.page(page, paper: paper))
+            // No text: put the page image on the clipboard to paste into the chat.
+            if page.stories.isEmpty, let image = page.image { UIPasteboard.general.image = image }
+            aiSheet = sheet
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     private func capture() async {
-        NSLog("DBG reader capture tapped")
         capturing = true
         defer { capturing = false }
         do { summary = try await PageCapture.capture(web.webView) } catch { self.error = error.localizedDescription }
