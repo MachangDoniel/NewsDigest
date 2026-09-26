@@ -1,0 +1,62 @@
+name: Daily digest
+
+on:
+  schedule:
+    # 06:00, 08:00 and 10:00 Dhaka time (UTC+6). Later runs only retry papers that aren't done yet.
+    - cron: "0 0 * * *"
+    - cron: "0 2 * * *"
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      paper:
+        description: "Only this paper (dailystar / prothomalo). Empty = both."
+        required: false
+      force:
+        description: "Re-run even if today's digest exists"
+        type: boolean
+        default: false
+
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Build digest
+        env:
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          GROQ_FALLBACK: ${{ vars.GROQ_FALLBACK }}
+          GEMINI_FALLBACK_MODELS: ${{ vars.GEMINI_FALLBACK_MODELS }}
+          DIGEST_LANG: ${{ vars.DIGEST_LANG }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DAILYSTAR_EMAIL: ${{ secrets.DAILYSTAR_EMAIL }}
+          DAILYSTAR_PASSWORD: ${{ secrets.DAILYSTAR_PASSWORD }}
+          PROTHOMALO_EMAIL: ${{ secrets.PROTHOMALO_EMAIL }}
+          PROTHOMALO_PASSWORD: ${{ secrets.PROTHOMALO_PASSWORD }}
+          PROTHOMALO_SESSION: ${{ secrets.PROTHOMALO_SESSION }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.paper }}" ]; then ARGS="$ARGS --paper ${{ inputs.paper }}"; fi
+          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          npm run digest -- $ARGS

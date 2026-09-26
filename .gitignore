@@ -1,0 +1,22 @@
+## Xcode
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+*.moved-aside
+*.hmap
+*.xcuserstate
+
+## xcodegen output (regenerate with `xcodegen generate`)
+Biddabari.xcodeproj/
+Generated/
+
+.DS_Store
+
+## NewsDigest server
+server/node_modules/
+server/.env
+server/.sessions/
+server/out/
+
+build/
