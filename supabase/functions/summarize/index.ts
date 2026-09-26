@@ -55,10 +55,13 @@ type Part = { text: string } | { inline_data: { mime_type: string; data: string 
 async function gemini(parts: Part[], preferred: string | undefined, jsonMode: boolean): Promise<{ text: string; model: string } | null> {
   const models = preferred && preferred !== "auto" ? [preferred, ...GEMINI_MODELS.filter((m) => m !== preferred)] : GEMINI_MODELS;
   const pool = keys("GEMINI_API_KEYS");
+  const deadline = Date.now() + 80_000; // stay well inside the app's 100 s wait
   for (const model of models) {
     for (const key of pool) {
+      if (Date.now() > deadline) return null;
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
+        signal: AbortSignal.timeout(Math.min(35_000, Math.max(1_000, deadline - Date.now()))),
         headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
           contents: [{ role: "user", parts }],
@@ -82,6 +85,7 @@ async function groqJSON(prompt: string, model: string): Promise<{ text: string; 
   for (const key of keys("GROQ_API_KEYS")) {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model,
@@ -105,6 +109,7 @@ async function groqChat(messages: { role: string; content: string }[]): Promise<
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(30_000),
       body: JSON.stringify({ model: GROQ_TEXT_MODEL, temperature: 0.3, reasoning_effort: "low", messages }),
     }).catch(() => null);
     if (res?.ok) {

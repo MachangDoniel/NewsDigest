@@ -1,4 +1,7 @@
 import SwiftUI
+import os
+
+private let debugLog = Logger(subsystem: "com.newsdigest.app", category: "summary")
 
 /// BCS summary of the page being viewed (via the `summarize` Edge Function), plus follow-up chat.
 /// When no AI model is available, it shows the paper's own stories for the page instead.
@@ -75,6 +78,8 @@ struct PageSummaryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
             .task { await summarize() }
+            .onAppear { debugLog.notice("DBG sheet appear") }
+            .onDisappear { debugLog.notice("DBG sheet disappear") }
             .sensoryFeedback(.success, trigger: loading) { old, new in old && !new && error == nil }
         }
         .presentationDetents([.medium, .large])
@@ -131,6 +136,7 @@ struct PageSummaryView: View {
     }
 
     private func summarize() async {
+        debugLog.notice("DBG summarize start id=\(capture.id)")
         loading = true
         error = nil
         unavailable = nil
@@ -150,6 +156,7 @@ struct PageSummaryView: View {
     }
 
     private func ask() async {
+        debugLog.notice("DBG ask tapped")
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         question = ""

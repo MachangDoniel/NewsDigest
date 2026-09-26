@@ -17,7 +17,8 @@ final class WebController: NSObject, ObservableObject, WKNavigationDelegate, WKU
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()   // persistent: logins survive relaunches
         config.applicationNameForUserAgent = "Version/17.0 Mobile/15E148 Safari/604.1"
-        config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        // Pages (ads especially) may not open windows by themselves; only after a user tap.
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
         return config
     }()
 
@@ -46,7 +47,21 @@ final class WebController: NSObject, ObservableObject, WKNavigationDelegate, WKU
         decisionHandler(.allow)
     }
 
+    /// Only sign-in pages may open as a pop-up sheet. Ads opening windows were knocking the
+    /// ✨ Summarize sheet off screen; other links open in the same page instead.
+    private static let signInHosts = ["accounts.google.com", "facebook.com", "appleid.apple.com", "auth.prothomalo.com", "profile.thedailystar.net"]
+
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        let host = navigationAction.request.url?.host?.lowercased() ?? ""
+        let isSignIn = Self.signInHosts.contains { host == $0 || host.hasSuffix("." + $0) }
+        guard isSignIn, navigationAction.navigationType == .linkActivated || navigationAction.navigationType == .other else {
+            // Not a sign-in window: open user-tapped links in place; drop everything else (ads).
+            if navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url,
+               Paper.allCases.contains(where: { p in p.hosts.contains { host == $0 || host.hasSuffix("." + $0) } }) {
+                webView.load(URLRequest(url: url))
+            }
+            return nil
+        }
         // Must use the passed-in configuration so the popup can talk back to its opener.
         let popup = WKWebView(frame: .zero, configuration: configuration)
         popup.uiDelegate = self
@@ -146,6 +161,7 @@ struct ReaderView: View {
     }
 
     private func capture() async {
+        NSLog("DBG reader capture tapped")
         capturing = true
         defer { capturing = false }
         do { summary = try await PageCapture.capture(web.webView) } catch { self.error = error.localizedDescription }

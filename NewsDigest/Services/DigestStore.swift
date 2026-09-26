@@ -79,7 +79,14 @@ final class DigestStore: ObservableObject {
     func invokeFunction<T: Decodable, B: Encodable>(_ name: String, body: B) async throws -> T {
         guard let client else { throw StoreError.notConfigured }
         guard authState == .signedIn else { throw StoreError.signedOut }
-        return try await client.functions.invoke(name, options: FunctionInvokeOptions(body: body))
+        // `session` refreshes an expired access token first; the function rejects stale ones (401).
+        let session = try await client.auth.session
+        return try await withTimeout(seconds: 100) {
+            try await client.functions.invoke(
+                name,
+                options: FunctionInvokeOptions(headers: ["Authorization": "Bearer \(session.accessToken)"], body: body)
+            )
+        }
     }
 
     func signOut() async {
@@ -163,12 +170,26 @@ final class DigestStore: ObservableObject {
     }
 }
 
+/// Fails with `StoreError.timedOut` if `operation` takes longer than `seconds`.
+func withTimeout<T: Sendable>(seconds: Double, _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask { try await operation() }
+        group.addTask {
+            try await Task.sleep(for: .seconds(seconds))
+            throw StoreError.timedOut
+        }
+        defer { group.cancelAll() }
+        return try await group.next()!
+    }
+}
+
 enum StoreError: LocalizedError {
-    case notConfigured, signedOut
+    case notConfigured, signedOut, timedOut
     var errorDescription: String? {
         switch self {
         case .notConfigured: "Connect your Supabase project in Settings first."
         case .signedOut: "Sign in on the Today tab to use ✨ Summarize."
+        case .timedOut: "The AI took too long to answer."
         }
     }
 }
