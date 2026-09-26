@@ -11,12 +11,19 @@ struct FlowLayout: Layout {
         return CGSize(width: proposal.width ?? width, height: height)
     }
 
+    /// A tag never gets wider than the row, so long ones wrap onto more lines instead of overflowing.
+    private func size(_ view: LayoutSubview, maxWidth: CGFloat) -> CGSize {
+        let natural = view.sizeThatFits(.unspecified)
+        guard natural.width > maxWidth, maxWidth.isFinite else { return natural }
+        return view.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+    }
+
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         var y = bounds.minY
         for row in rows(bounds.width, subviews) {
             var x = bounds.minX
             for i in row.indices {
-                let size = subviews[i].sizeThatFits(.unspecified)
+                let size = size(subviews[i], maxWidth: bounds.width)
                 subviews[i].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
@@ -29,7 +36,7 @@ struct FlowLayout: Layout {
     private func rows(_ maxWidth: CGFloat, _ subviews: Subviews) -> [Row] {
         var rows: [Row] = [Row()]
         for i in subviews.indices {
-            let size = subviews[i].sizeThatFits(.unspecified)
+            let size = size(subviews[i], maxWidth: maxWidth)
             if !rows[rows.count - 1].indices.isEmpty, rows[rows.count - 1].width + spacing + size.width > maxWidth {
                 rows.append(Row())
             }

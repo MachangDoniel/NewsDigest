@@ -15,8 +15,8 @@ Reading two full newspapers every day takes hours. NewsDigest reads them for you
 ```
 GitHub Actions (06:00, 08:00, 10:00 Dhaka time)
   └─ Playwright signs in to each e-paper with your credentials
-  └─ downloads today's page images
-  └─ Gemini reads each page → BCS-relevant stories, key facts, MCQs
+  └─ fetches every story's text (headline, body, captions) from the e-paper reader
+  └─ Gemini reads the text → BCS-relevant stories, key facts, MCQs
   └─ Groq groups duplicate stories, which are then merged
   └─ saves the digest to Supabase
                      │
@@ -25,12 +25,22 @@ GitHub Actions (06:00, 08:00, 10:00 Dhaka time)
   Today · Archive · Papers · Settings
 ```
 
-- **One page at a time.** Each page image goes to Gemini with a BCS-focused prompt. The answer comes back as structured JSON: category, headline, bullets, key facts, relevance (high or medium), and page number.
+- **Real article text, not OCR.** Both e-papers serve each story's text to signed-in subscribers. Gemini summarizes that text one page at a time, so numbers, names and dates are copied exactly. The answer comes back as structured JSON: category, headline, bullets, key facts, relevance (high or medium) and page. Each item also keeps the paper's own headline and opening lines, shown as **From the paper**. Reading the page image is only a fallback for pages without text.
 - **Model fallback.** If the main Gemini model is overloaded or out of quota, the job tries the next one: `gemini-3.8-flash` → `3.7-flash` → `3.5-flash-lite`.
 - **Duplicate merging.** A text-only Groq call lists which stories are the same news. The code then merges them, so the model never writes facts itself.
 - **Retries.** Later runs only redo papers that aren't done yet. Failures (expired login, CAPTCHA, edition not out yet) are shown as banners in the app.
 
 ## The app
+
+<table>
+  <tr>
+    <td align="center" width="20%"><img src="docs/screenshots/today.png" alt="Today tab"><br><sub><b>Today</b><br>stories by category, key facts</sub></td>
+    <td align="center" width="20%"><img src="docs/screenshots/bangla-from-the-paper.png" alt="Prothom Alo digest in Bangla"><br><sub><b>প্রথম আলো in Bangla</b><br>with the paper's own text</sub></td>
+    <td align="center" width="20%"><img src="docs/screenshots/mcqs.png" alt="Practice MCQs"><br><sub><b>Practice MCQs</b><br>tap to check your answer</sub></td>
+    <td align="center" width="20%"><img src="docs/screenshots/archive-search.png" alt="Archive search"><br><sub><b>Archive</b><br>search every past digest</sub></td>
+    <td align="center" width="20%"><img src="docs/screenshots/papers.png" alt="Papers tab"><br><sub><b>Papers</b><br>read the e-papers in-app</sub></td>
+  </tr>
+</table>
 
 | Tab | What it does |
 |---|---|
@@ -101,7 +111,7 @@ Run on a simulator or device. Then, in the app's **Settings**:
 
 ## Limitations
 
-- **Summaries can contain mistakes,** especially when only the lighter fallback model is available. Check key facts against the page (tap **Page N**) before memorizing them.
+- **Summaries can still contain mistakes.** Check key facts against **From the paper** or the page itself (tap **Page N**) before memorizing them. Stories that had to be read from a page image by the lighter model are marked with an orange warning.
 - **Scrapers depend on each site's layout.** If a paper redesigns its reader, the job reports "layout not recognized" and logs the new structure for fixing.
 - **CAPTCHAs are never bypassed.** If a site shows one, that day's run stops and the app suggests ✨ Summarize instead.
 - **Groq isn't used to read pages by default.** Its image model misreads small Bangla print and was seen inventing headlines. Enable it with `GROQ_FALLBACK=true` only if you accept that risk.

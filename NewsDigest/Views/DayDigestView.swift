@@ -28,6 +28,9 @@ struct DayDigestView: View {
             .padding(.bottom, 24)
         }
         .background(Color(.systemGroupedBackground))
+        // Solid title bar: otherwise cards scrolling under it show through above the pinned filters.
+        .toolbarBackground(Color(.systemGroupedBackground), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .refreshable { await load() }
         .task(id: date) { await load() }
         .fullScreenCover(item: $reader) { item in
