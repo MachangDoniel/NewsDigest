@@ -5,6 +5,7 @@ import { captureDailyStar } from "./papers/dailyStar.js";
 import { captureProthomAlo } from "./papers/prothomAlo.js";
 import { dhakaDate } from "./papers/common.js";
 import { summarizePage } from "./gemini.js";
+import { merge } from "./merge.js";
 import { pagePrompt, type DigestLang } from "./prompt.js";
 import { hasDigest, saveDigest, saveStatus, type RunState } from "./supabase.js";
 import {
@@ -36,36 +37,6 @@ const PAPERS: { id: PaperId; name: string; capture: (b: Browser) => Promise<Page
 ];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-
-function merge(summaries: PageSummary[]): { sections: DigestSection[]; mcqs: Mcq[] } {
-  const byCat = new Map<string, DigestSection>();
-  const seen = new Set<string>();
-  for (const s of summaries) {
-    for (const section of s.sections) {
-      for (const item of section.items) {
-        const key = norm(item.headline);
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        const cat = CATEGORIES.includes(section.category) ? section.category : "Others";
-        if (!byCat.has(cat)) byCat.set(cat, { category: cat, items: [] });
-        byCat.get(cat)!.items.push(item);
-      }
-    }
-  }
-  const sections = CATEGORIES.filter((c) => byCat.has(c)).map((c) => {
-    const sec = byCat.get(c)!;
-    // High-relevance first, then page order.
-    sec.items.sort((a, b) => (a.bcsRelevance === b.bcsRelevance ? a.page - b.page : a.bcsRelevance === "high" ? -1 : 1));
-    return sec;
-  });
-  const mcqs = summaries
-    .flatMap((s) => s.mcqs)
-    .filter((q) => q.options.length === 4 && q.options.includes(q.answer))
-    .slice(0, 20);
-  return { sections, mcqs };
-}
-
 function stateFor(err: unknown): RunState {
   if (err instanceof LoginError) return "login_expired";
   if (err instanceof ChallengeError) return "challenge";
@@ -99,7 +70,7 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], date: 
   }
   if (summaries.length === 0) throw new Error("Gemini failed on every page");
 
-  const digest = merge(summaries);
+  const digest = await merge(summaries);
   if (DRY) {
     mkdirSync("out", { recursive: true });
     writeFileSync(`out/${date}-${paper.id}.json`, JSON.stringify(digest, null, 2));

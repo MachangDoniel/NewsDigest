@@ -1,6 +1,6 @@
 import { CATEGORIES, type PageSummary } from "./types.js";
 import { KeyPool } from "./keys.js";
-import { groqConfigured, summarizePageGroq } from "./groq.js";
+import { groqConfigured, parseGroups, summarizePageGroq } from "./groq.js";
 
 const RESPONSE_SCHEMA = {
   type: "OBJECT",
@@ -112,4 +112,31 @@ export async function summarizePage(image: { mime: string; data: Buffer }, promp
   }
   if (useGroq) return summarizePageGroq(image, prompt);
   throw lastError ?? new Error("GEMINI_API_KEYS is not set");
+}
+
+/** Text-only duplicate grouping; used when Groq isn't available. Returns null if Gemini isn't set up. */
+export async function groupDuplicatesGemini(prompt: string): Promise<number[][] | null> {
+  if (!pool.configured()) return null;
+  let lastError: unknown;
+  for (const model of geminiModels().reverse()) {
+    // Cheapest model first: this is an easy task and saves the main model's quota for page reading.
+    const res = await pool.fetchWithRotation(
+      (key) =>
+        fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0 },
+          }),
+        }),
+      { backoff: false },
+    );
+    if (res.ok) {
+      const json: any = await res.json();
+      return parseGroups(json.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "");
+    }
+    lastError = new Error(`Gemini ${model} ${res.status}`);
+  }
+  throw lastError;
 }

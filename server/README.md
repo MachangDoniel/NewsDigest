@@ -27,7 +27,7 @@ Create a free API key at aistudio.google.com.
 Push this repo to GitHub (a private repo is fine), then run from the repo root:
 ```bash
 gh secret set GEMINI_API_KEYS   # one key, or several comma-separated
-gh secret set GROQ_API_KEYS     # optional; only used if GROQ_FALLBACK=true
+gh secret set GROQ_API_KEYS     # optional; spots duplicate stories (and page fallback if GROQ_FALLBACK=true)
 gh secret set SUPABASE_URL
 gh secret set SUPABASE_SERVICE_ROLE_KEY
 gh secret set DAILYSTAR_EMAIL
