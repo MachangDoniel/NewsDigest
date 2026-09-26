@@ -82,7 +82,8 @@ async function summarizePageGemini(image: { mime: string; data: Buffer }, prompt
 /** GEMINI_MODEL first, then GEMINI_FALLBACK_MODELS (comma-separated) when a model is overloaded. */
 function geminiModels(): string[] {
   const primary = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-  const fallbacks = (process.env.GEMINI_FALLBACK_MODELS ?? "gemini-3.7-flash,gemini-3.5-flash-lite")
+  // `||` not `??`: GitHub passes unset repository variables as "".
+  const fallbacks = (process.env.GEMINI_FALLBACK_MODELS || "gemini-3.7-flash,gemini-3.5-flash-lite")
     .split(",")
     .map((m) => m.trim())
     .filter((m) => m && m !== primary);

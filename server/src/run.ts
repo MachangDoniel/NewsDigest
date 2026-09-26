@@ -83,7 +83,7 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], date: 
   const pages = (await paper.capture(browser)).slice(0, MAX_PAGES);
   console.log(`  captured ${pages.length} pages`);
 
-  const delay = Number(process.env.GEMINI_DELAY_SECONDS ?? 7) * 1000;
+  const delay = Number(process.env.GEMINI_DELAY_SECONDS || 7) * 1000;
   const summaries: PageSummary[] = [];
   for (const [i, p] of pages.entries()) {
     if (i > 0) await sleep(delay);
