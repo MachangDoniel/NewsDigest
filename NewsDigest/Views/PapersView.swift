@@ -12,7 +12,7 @@ struct PapersView: View {
                             .buttonStyle(.plain)
                     }
 
-                    Label("Sign in once inside each paper. The app remembers your login. Use ✨ Summarize on any page for an instant BCS digest.", systemImage: "info.circle")
+                    Label("Sign in once inside each paper. The app remembers your login. Tap Ask on any page or article for a BCS summary, or to open it in ChatGPT, Gemini, Claude and more.", systemImage: "info.circle")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)

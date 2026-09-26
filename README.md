@@ -34,20 +34,26 @@ GitHub Actions (06:00, 08:00, 10:00 Dhaka time)
 
 <table>
   <tr>
-    <td align="center" width="20%"><img src="docs/screenshots/today.png" alt="Today tab"><br><sub><b>Today</b><br>stories by category, key facts</sub></td>
-    <td align="center" width="20%"><img src="docs/screenshots/bangla-from-the-paper.png" alt="Prothom Alo digest in Bangla"><br><sub><b>প্রথম আলো in Bangla</b><br>with the paper's own text</sub></td>
-    <td align="center" width="20%"><img src="docs/screenshots/mcqs.png" alt="Practice MCQs"><br><sub><b>Practice MCQs</b><br>tap to check your answer</sub></td>
-    <td align="center" width="20%"><img src="docs/screenshots/archive-search.png" alt="Archive search"><br><sub><b>Archive</b><br>search every past digest</sub></td>
-    <td align="center" width="20%"><img src="docs/screenshots/papers.png" alt="Papers tab"><br><sub><b>Papers</b><br>read the e-papers in-app</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/today.png" alt="Today tab"><br><sub><b>Today</b><br>stories by category, key facts</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/bangla-from-the-paper.png" alt="Prothom Alo digest in Bangla"><br><sub><b>প্রথম আলো in Bangla</b><br>with the paper's own text</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/practice.png" alt="Practice tab"><br><sub><b>Practice</b><br>all MCQs, with a score</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/ask-menu.png" alt="Ask menu"><br><sub><b>Ask an AI</b><br>ChatGPT, Gemini, Claude, Grok…</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="25%"><img src="docs/screenshots/summary-chat.png" alt="BCS summary with chat"><br><sub><b>BCS summary + chat</b><br>ask follow-up questions</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/archive-search.png" alt="Archive search"><br><sub><b>Archive</b><br>search every past digest</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/papers.png" alt="Papers tab"><br><sub><b>Papers</b><br>read the e-papers in-app</sub></td>
+    <td width="25%"></td>
   </tr>
 </table>
 
 | Tab | What it does |
 |---|---|
-| **Today** | Today's digest. Step to earlier days with ◀ ▶, swipe, or a calendar. Filter by paper, category or high relevance. Tap a story to open that page of the e-paper. Practice MCQs at the bottom. |
+| **Today** | Today's digest. Step to earlier days with ◀ ▶, swipe, or a calendar. Filter by paper, category or high relevance. Each story shows the paper's own opening lines, opens its page of the e-paper, and has an **Ask** menu (ChatGPT, Gemini, Claude, Grok and more). |
+| **Practice** | All of the day's MCQs in one place, with a score. Past days via ◀ ▶ or a calendar. After answering, ask an AI to explain. |
 | **Archive** | Every past day, grouped by month. Search across all digests. Bookmarked stories for revision. Days you've opened work offline. |
-| **Papers** | Both e-papers in an in-app browser that remembers your login. **✨ Summarize** gives an instant digest of the page you're viewing, with follow-up chat. You can also send the page to the ChatGPT or Gemini app. |
-| **Settings** | Supabase sign-in, your Gemini key for on-device summaries, and summary language (English / বাংলা / both). |
+| **Papers** | Both e-papers in an in-app browser that remembers your login. Tap a story box to open the article. **Ask** gives an instant BCS summary of the page or article, with follow-up chat, or opens it in ChatGPT, Gemini, Claude, Grok and more with the text already filled in. |
+| **Settings** | Your digest account, the AI model (Gemini or Groq) and the summary language. No API key is needed on the phone: summaries run through a Supabase Edge Function that holds the keys. |
 
 ## Repository layout
 
