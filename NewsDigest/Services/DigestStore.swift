@@ -27,7 +27,14 @@ final class DigestStore: ObservableObject {
 
     // MARK: - Setup & auth
 
-    var supabaseURL: String { UserDefaults.standard.string(forKey: Self.urlKey) ?? "" }
+    /// A project entered in Settings wins; otherwise the built-in one from AppConfig.
+    var supabaseURL: String {
+        UserDefaults.standard.string(forKey: Self.urlKey).flatMap { $0.isEmpty ? nil : $0 } ?? AppConfig.supabaseURL
+    }
+    private var supabaseKey: String {
+        Keychain.get(Self.anonKeyKey).flatMap { $0.isEmpty ? nil : $0 } ?? AppConfig.supabasePublishableKey
+    }
+    var usesCustomProject: Bool { !(UserDefaults.standard.string(forKey: Self.urlKey) ?? "").isEmpty }
 
     func configure(url: String, anonKey: String) {
         UserDefaults.standard.set(url.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.urlKey)
@@ -35,8 +42,15 @@ final class DigestStore: ObservableObject {
         configureFromStorage()
     }
 
+    func useDefaultProject() {
+        UserDefaults.standard.removeObject(forKey: Self.urlKey)
+        Keychain.set(nil, for: Self.anonKeyKey)
+        configureFromStorage()
+    }
+
     private func configureFromStorage() {
-        guard let url = URL(string: supabaseURL), url.host != nil, let key = Keychain.get(Self.anonKeyKey), !key.isEmpty else {
+        let key = supabaseKey
+        guard let url = URL(string: supabaseURL), url.host != nil, !key.isEmpty else {
             client = nil
             authState = .unconfigured
             return

@@ -28,6 +28,7 @@ struct TodayView: View {
             .navigationTitle(DigestDate.pretty(DigestDate.string(date)))
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                if store.authState == .signedIn {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { step(-1) } label: { Image(systemName: "chevron.left") }
                     Button { showCalendar = true } label: { Image(systemName: "calendar") }
@@ -38,6 +39,7 @@ struct TodayView: View {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Today") { withAnimation { date = Calendar.dhaka.startOfDay(for: .now) } }
                     }
+                }
                 }
             }
             .sheet(isPresented: $showCalendar) {
@@ -62,11 +64,34 @@ struct TodayView: View {
 }
 
 struct ConnectPrompt: View {
+    @EnvironmentObject private var store: DigestStore
+
     var body: some View {
-        ContentUnavailableView {
-            Label("Connect your digest", systemImage: "link.circle")
-        } description: {
-            Text("Open Settings and sign in to your Supabase project to see the daily BCS digests. The Papers tab works without it.")
+        ScrollView {
+            VStack(spacing: 20) {
+                Image(systemName: "sparkles.rectangle.stack")
+                    .font(.system(size: 44))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.top, 40)
+                VStack(spacing: 6) {
+                    Text("Sign in to see your digests").font(.title2.weight(.bold))
+                    Text("Use the NewsDigest account from your Supabase project. The Papers tab works without it.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                if store.authState == .unconfigured {
+                    Text("No digest project is set. Add one in Settings.")
+                        .font(.subheadline)
+                        .foregroundStyle(.orange)
+                } else {
+                    SignInForm()
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 420)
+            .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 }

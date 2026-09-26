@@ -5,10 +5,6 @@ struct SettingsView: View {
 
     @State private var url = ""
     @State private var anonKey = ""
-    @State private var email = ""
-    @State private var password = ""
-    @State private var signingIn = false
-    @State private var authError: String?
 
     @State private var geminiKey = ""
     @AppStorage(GeminiClient.modelDefaultsKey) private var model = GeminiClient.defaultModel
@@ -20,36 +16,38 @@ struct SettingsView: View {
                 Section {
                     switch store.authState {
                     case .signedIn:
-                        Label("Connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        Label("Signed in", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                         LabeledContent("Project", value: URL(string: store.supabaseURL)?.host ?? "")
                         Button("Sign out", role: .destructive) { Task { await store.signOut() } }
                     case .signedOut:
-                        TextField("Email", text: $email)
-                            .textContentType(.username)
-                            .keyboardType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                        SecureField("Password", text: $password).textContentType(.password)
-                        Button {
-                            Task { await signIn() }
-                        } label: {
-                            if signingIn { ProgressView() } else { Text("Sign in") }
-                        }
-                        .disabled(email.isEmpty || password.isEmpty || signingIn)
-                        Button("Change project", role: .destructive) { store.configure(url: "", anonKey: "") }
+                        SignInForm()
+                            .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                     case .unconfigured:
-                        TextField("Project URL (https://xxxx.supabase.co)", text: $url)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        SecureField("Anon public key", text: $anonKey)
-                        Button("Connect") { store.configure(url: url, anonKey: anonKey) }
-                            .disabled(!url.hasPrefix("https://") || anonKey.isEmpty)
+                        Text("No digest project set.").foregroundStyle(.secondary)
                     }
-                    if let authError { Text(authError).font(.caption).foregroundStyle(.red) }
                 } header: {
-                    Text("Daily digest (Supabase)")
+                    Text("Daily digest account")
                 } footer: {
-                    Text("Supabase → Project Settings → API gives the URL and the anon key. Sign in with the user you created under Authentication → Users.")
+                    Text("Sign in with the user from your Supabase project (Authentication → Users). Not your newspaper login.")
+                }
+
+                if store.authState != .signedIn {
+                    Section {
+                        DisclosureGroup("Use a different Supabase project") {
+                            TextField("Project URL (https://xxxx.supabase.co)", text: $url)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            SecureField("Publishable (anon) key", text: $anonKey)
+                            Button("Connect") { store.configure(url: url, anonKey: anonKey) }
+                                .disabled(!url.hasPrefix("https://") || anonKey.isEmpty)
+                            if store.usesCustomProject {
+                                Button("Use the built-in project") { store.useDefaultProject() }
+                            }
+                        }
+                    } footer: {
+                        Text("Only needed if you run your own copy of the server. Supabase → Project Settings → API Keys.")
+                    }
                 }
 
                 Section {
@@ -79,21 +77,9 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .onAppear {
-                url = store.supabaseURL
+                url = store.usesCustomProject ? store.supabaseURL : ""
                 geminiKey = Keychain.get(GeminiClient.keyName) ?? ""
             }
-        }
-    }
-
-    private func signIn() async {
-        signingIn = true
-        authError = nil
-        defer { signingIn = false }
-        do {
-            try await store.signIn(email: email, password: password)
-            password = ""
-        } catch {
-            authError = error.localizedDescription
         }
     }
 }
