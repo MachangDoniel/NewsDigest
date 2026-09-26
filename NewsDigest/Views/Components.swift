@@ -135,6 +135,10 @@ struct ItemCard: View {
                 }
             }
 
+            if let excerpt = saved.item.excerpt, !excerpt.isEmpty {
+                FromThePaper(headline: saved.item.sourceHeadline, excerpt: excerpt, tint: saved.paper.color)
+            }
+
             if saved.item.needsCheck {
                 Label("Read by a lighter AI model. Check numbers and dates on the page.", systemImage: "exclamationmark.triangle")
                     .font(.caption2)
@@ -165,6 +169,40 @@ struct ItemCard: View {
     private var shareText: String {
         ([saved.item.headline] + saved.item.bullets.map { "• \($0)" } + ["Key facts: " + saved.item.keyFacts.joined(separator: "; ")])
             .joined(separator: "\n")
+    }
+}
+
+/// The paper's own headline and opening lines, collapsed by default.
+struct FromThePaper: View {
+    let headline: String?
+    let excerpt: String
+    let tint: Color
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { withAnimation(.snappy) { open.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.quote")
+                    Text("From the paper").font(.caption.weight(.semibold))
+                    Spacer()
+                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.caption2)
+                }
+                .foregroundStyle(tint)
+            }
+            .buttonStyle(.plain)
+
+            if open {
+                if let headline, !headline.isEmpty {
+                    Text(headline).font(.subheadline.weight(.semibold))
+                }
+                Text(excerpt).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(alignment: .leading) { Rectangle().fill(tint.opacity(0.5)).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 2)) }
     }
 }
 

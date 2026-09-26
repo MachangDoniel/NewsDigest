@@ -1,5 +1,6 @@
 import type { Browser, BrowserContext, Page } from "playwright";
 import { LoginError, NotPublishedError, type PageImage } from "../types.js";
+import { attachStories } from "./stories.js";
 import { assertNoChallenge, dhakaDate, downloadPages, type TagList } from "./common.js";
 
 const LOGIN_URL = "https://profile.thedailystar.net/login?redirect_to=https://epaper.thedailystar.net/Login/LandingPage";
@@ -84,6 +85,8 @@ export async function captureDailyStar(browser: Browser): Promise<PageImage[]> {
     if (pages.length === 0 || failed.length > tags.length / 2) {
       throw new LoginError("Daily Star page images could not be downloaded (subscription/login?)");
     }
+    // Real article text; image reading stays as the fallback for pages without it.
+    await attachStories(context, "https://epaper.thedailystar.net", pages, page.url()).catch((e) => console.warn(`  article text unavailable: ${(e as Error).message}`));
     return pages;
   } finally {
     await context.close();

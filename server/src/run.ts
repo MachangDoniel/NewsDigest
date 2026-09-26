@@ -4,9 +4,9 @@ import { chromium, type Browser } from "playwright";
 import { captureDailyStar } from "./papers/dailyStar.js";
 import { captureProthomAlo } from "./papers/prothomAlo.js";
 import { dhakaDate } from "./papers/common.js";
-import { summarizePage } from "./gemini.js";
+import { summarizePage, summarizeStories } from "./gemini.js";
 import { merge } from "./merge.js";
-import { pagePrompt, type DigestLang } from "./prompt.js";
+import { pagePrompt, storiesPrompt, type DigestLang } from "./prompt.js";
 import { hasDigest, saveDigest, saveStatus, type RunState } from "./supabase.js";
 import {
   CATEGORIES,
@@ -38,6 +38,34 @@ const PAPERS: { id: PaperId; name: string; lang: DigestLang; capture: (b: Browse
 ];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** First ~2 sentences of the paper's own text, as a short excerpt. */
+function excerptOf(body: string, max = 320): string {
+  const text = body.replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const end = Math.max(cut.lastIndexOf("। "), cut.lastIndexOf(". "), cut.lastIndexOf("? "));
+  return (end > max * 0.5 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, "")) + " …";
+}
+
+/** Links each item to its page and, in text mode, to the paper's own headline and opening lines. */
+function attachSource(summary: PageSummary, page: PageImage) {
+  for (const section of summary.sections) {
+    for (const item of section.items) {
+      item.page = page.pageNo;
+      item.pageId = page.pageId;
+      const story = item.story !== undefined ? page.stories?.[item.story] : undefined;
+      if (story) {
+        item.sourceHeadline = story.headline;
+        // Skip a leading byline line like "বিশেষ প্রতিনিধি, ঢাকা" / "Staff Correspondent".
+        const lines = story.body.split("\n").map((l) => l.trim()).filter(Boolean);
+        const bodyStart = lines.length > 1 && lines[0].length < 60 ? lines.slice(1) : lines;
+        item.excerpt = excerptOf(bodyStart.join(" "));
+      }
+      delete item.story;
+    }
+  }
+}
+
 function stateFor(err: unknown): RunState {
   if (err instanceof LoginError) return "login_expired";
   if (err instanceof ChallengeError) return "challenge";
@@ -60,9 +88,14 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], date: 
   for (const [i, p] of pages.entries()) {
     if (i > 0) await sleep(delay);
     try {
-      const s = await summarizePage(p, pagePrompt({ paper: paper.name, pageName: p.name, pageNo: p.pageNo, lang }));
+      const opts = { paper: paper.name, pageName: p.name, pageNo: p.pageNo, lang };
+      const stories = p.stories ?? [];
+      const s = stories.length
+        ? await summarizeStories(storiesPrompt({ ...opts, stories }))
+        : await summarizePage(p, pagePrompt(opts));
+      attachSource(s, p);
       const n = s.sections.reduce((a, x) => a + x.items.length, 0);
-      console.log(`  page ${p.pageNo} ${p.name}: ${n} items`);
+      console.log(`  page ${p.pageNo} ${p.name}: ${n} items (from ${stories.length ? `text, ${stories.length} stories` : "image"})`);
       summaries.push(s);
     } catch (e) {
       // One bad page shouldn't sink the whole digest.

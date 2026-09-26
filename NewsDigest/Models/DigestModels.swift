@@ -29,10 +29,16 @@ struct DigestItem: Codable, Hashable {
     let bcsRelevance: String
     let page: Int
     let model: String?
+    var pageId: String? = nil
+    /// "text" when summarized from the paper's article text, "image" when read off the page scan.
+    var source: String? = nil
+    /// The paper's own headline and opening lines (text mode).
+    var sourceHeadline: String? = nil
+    var excerpt: String? = nil
 
     var isHigh: Bool { bcsRelevance == "high" }
-    /// Read by a lighter fallback model, which sometimes misreads numbers (e.g. Bangla digits).
-    var needsCheck: Bool { ModelCheck.isLight(model) }
+    /// A lighter model reading a page image sometimes misreads numbers (e.g. Bangla digits). Text is exact.
+    var needsCheck: Bool { source != "text" && ModelCheck.isLight(model) }
 }
 
 enum ModelCheck {
@@ -47,8 +53,9 @@ struct Mcq: Codable, Hashable {
     let options: [String]
     let answer: String
     var model: String? = nil
+    var source: String? = nil
 
-    var needsCheck: Bool { ModelCheck.isLight(model) }
+    var needsCheck: Bool { source != "text" && ModelCheck.isLight(model) }
 }
 
 struct RunStatus: Codable, Hashable {

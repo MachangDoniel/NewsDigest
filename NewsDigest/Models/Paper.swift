@@ -42,7 +42,15 @@ enum Paper: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    func editionURL(for date: Date = .now) -> URL {
+    /// Opens a specific page when `pageId` is known (both readers accept `pgid`).
+    func editionURL(for date: Date = .now, pageId: String? = nil) -> URL {
+        let base = editionBaseURL(for: date)
+        guard let pageId, var c = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return base }
+        c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "pgid", value: pageId)]
+        return c.url ?? base
+    }
+
+    private func editionBaseURL(for date: Date) -> URL {
         let f = DateFormatter()
         f.timeZone = .dhaka
         f.dateFormat = "dd/MM/yyyy"

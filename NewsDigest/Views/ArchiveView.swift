@@ -35,7 +35,7 @@ struct ArchiveView: View {
                 DayDigestView(date: date).navigationTitle(DigestDate.pretty(date))
             }
             .fullScreenCover(item: $reader) { item in
-                ReaderView(paper: item.paper, date: DigestDate.date(item.date))
+                ReaderView(paper: item.paper, date: DigestDate.date(item.date), pageId: item.item.pageId)
             }
         }
     }

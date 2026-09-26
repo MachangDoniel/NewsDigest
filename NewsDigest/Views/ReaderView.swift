@@ -68,6 +68,7 @@ struct WebViewHost: UIViewRepresentable {
 struct ReaderView: View {
     let paper: Paper
     let date: Date
+    var pageId: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var web = WebController()
@@ -106,7 +107,7 @@ struct ReaderView: View {
                     } label: { Image(systemName: "ellipsis.circle") }
                 }
             }
-            .onAppear { if web.webView.url == nil { web.load(paper.editionURL(for: date)) } }
+            .onAppear { if web.webView.url == nil { web.load(paper.editionURL(for: date, pageId: pageId)) } }
             .sheet(item: $summary) { PageSummaryView(paper: paper, capture: $0) }
             .sheet(item: $shareItems) { ActivityView(items: $0.items) }
             .sheet(isPresented: Binding(get: { web.popup != nil }, set: { if !$0 { web.popup = nil } })) {

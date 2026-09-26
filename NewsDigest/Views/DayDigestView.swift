@@ -31,7 +31,7 @@ struct DayDigestView: View {
         .refreshable { await load() }
         .task(id: date) { await load() }
         .fullScreenCover(item: $reader) { item in
-            ReaderView(paper: item.paper, date: DigestDate.date(item.date))
+            ReaderView(paper: item.paper, date: DigestDate.date(item.date), pageId: item.item.pageId)
         }
     }
 

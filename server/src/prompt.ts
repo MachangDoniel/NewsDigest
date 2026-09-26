@@ -8,10 +8,28 @@ const LANG_RULE: Record<DigestLang, string> = {
   both: "Write the headline in English followed by the Bangla headline in brackets; write bullets and facts in English.",
 };
 
-export function pagePrompt(opts: { paper: string; pageName: string; pageNo: number; lang: DigestLang }): string {
+type PromptOpts = { paper: string; pageName: string; pageNo: number; lang: DigestLang };
+
+/** Prompt for the article TEXT of one page. Each story is numbered; the model reports which one each item came from. */
+export function storiesPrompt(opts: PromptOpts & { stories: { headline: string; body: string; captions: string[] }[] }): string {
+  const list = opts.stories
+    .map((s, i) => {
+      const body = s.body.length > 3000 ? s.body.slice(0, 3000) + " …" : s.body;
+      const captions = s.captions.length ? `\nPhoto captions: ${s.captions.join(" | ")}` : "";
+      return `### Story ${i}\nHeadline: ${s.headline}\n${body}${captions}`;
+    })
+    .join("\n\n");
+  return pagePrompt(opts, "text")
+    .replace("{{SOURCE}}", `Below is the article text of page ${opts.pageNo} ("${opts.pageName}") of today's ${opts.paper}, story by story.`)
+    .concat(`\n\nFor each item, set "story" to the number of the story it came from. Copy numbers, dates and names exactly as written in the text.\n\n${list}`);
+}
+
+export function pagePrompt(opts: PromptOpts, source: "image" | "text" = "image"): string {
+  const intro =
+    source === "image" ? `Below is page ${opts.pageNo} ("${opts.pageName}") of today's ${opts.paper} e-paper, as an image.` : "{{SOURCE}}";
   return `You are a study assistant for a candidate preparing for the Bangladesh Civil Service (BCS) exam.
 
-Below is page ${opts.pageNo} ("${opts.pageName}") of today's ${opts.paper} e-paper, as an image.
+${intro}
 
 Extract ONLY news that could matter for the BCS preliminary/written exam or the viva:
 - Bangladesh affairs: government decisions, laws, ordinances, constitution, elections, appointments, projects (with cost/length/location), policies, reports and statistics.

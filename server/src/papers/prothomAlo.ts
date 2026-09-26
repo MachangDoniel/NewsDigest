@@ -1,5 +1,6 @@
 import type { Browser, BrowserContext } from "playwright";
 import { LoginError, NotPublishedError, type PageImage } from "../types.js";
+import { attachStories } from "./stories.js";
 import { assertNoChallenge, dhakaDate, downloadPages, readPageImageTags } from "./common.js";
 import { loadSession } from "../session.js";
 
@@ -63,6 +64,8 @@ export async function captureProthomAlo(browser: Browser): Promise<PageImage[]> 
     if (pages.length === 0 || failed.length > tags.length / 2) {
       throw new LoginError("Prothom Alo page images could not be downloaded (login/subscription?)");
     }
+    // Real article text; image reading stays as the fallback for pages without it.
+    await attachStories(context, BASE, pages, page.url()).catch((e) => console.warn(`  article text unavailable: ${(e as Error).message}`));
     return pages;
   } finally {
     await context.close();

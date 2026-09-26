@@ -65,7 +65,7 @@ export async function downloadPages(context: BrowserContext, tags: TagList, refe
       failed.push(tag);
       continue;
     }
-    pages.push({ pageNo: tag.pageNo, sequence: tag.sequence, name: tag.name, mime: img.mime, data: img.data });
+    pages.push({ pageNo: tag.pageNo, sequence: tag.sequence, name: tag.name, pageId: tag.id, mime: img.mime, data: img.data });
   }
   pages.sort((a, b) => a.sequence - b.sequence);
   return { pages, failed };

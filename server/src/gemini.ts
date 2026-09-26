@@ -22,6 +22,7 @@ const RESPONSE_SCHEMA = {
                 keyFacts: { type: "ARRAY", items: { type: "STRING" } },
                 bcsRelevance: { type: "STRING", enum: ["high", "medium"] },
                 page: { type: "INTEGER" },
+                story: { type: "INTEGER" },
               },
               required: ["headline", "bullets", "keyFacts", "bcsRelevance", "page"],
             },
@@ -48,23 +49,21 @@ const RESPONSE_SCHEMA = {
 
 const pool = new KeyPool("GEMINI_API_KEYS", "GEMINI_API_KEY");
 
-async function summarizePageGemini(image: { mime: string; data: Buffer }, prompt: string, model: string, backoff: boolean): Promise<PageSummary> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
+
+async function imageParts(image: { mime: string; data: Buffer }, prompt: string): Promise<Part[]> {
   const halves = await splitHalves(image.data);
   const note =
     halves.length > 1
       ? "\n\nThe page is given as two images: the TOP half, then the BOTTOM half, overlapping slightly. Treat them as one page and don't repeat a story that appears in the overlap. Read numbers and dates carefully, including Bangla digits (০-৯)."
       : "";
+  return [...halves.map((h) => ({ inline_data: { mime_type: h.mime, data: h.data.toString("base64") } })), { text: prompt + note }];
+}
+
+async function generateSummary(parts: Part[], model: string, backoff: boolean): Promise<PageSummary> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [
-          ...halves.map((h) => ({ inline_data: { mime_type: h.mime, data: h.data.toString("base64") } })),
-          { text: prompt + note },
-        ],
-      },
-    ],
+    contents: [{ role: "user", parts }],
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema: RESPONSE_SCHEMA,
@@ -88,9 +87,16 @@ async function summarizePageGemini(image: { mime: string; data: Buffer }, prompt
   return JSON.parse(text) as PageSummary;
 }
 
-function tagModel(summary: PageSummary, model: string): PageSummary {
-  for (const section of summary.sections) for (const item of section.items) item.model = model;
-  for (const q of summary.mcqs) q.model = model;
+function tagModel(summary: PageSummary, model: string, source: "image" | "text" = "image"): PageSummary {
+  for (const section of summary.sections)
+    for (const item of section.items) {
+      item.model = model;
+      item.source = source;
+    }
+  for (const q of summary.mcqs) {
+    q.model = model;
+    q.source = source;
+  }
   return summary;
 }
 
@@ -105,28 +111,40 @@ function geminiModels(): string[] {
   return [primary, ...fallbacks];
 }
 
+/** Tries each Gemini model in turn; the last one waits and retries on rate limits. */
+async function withModelChain(parts: Part[], source: "image" | "text", allowFinalBackoff: boolean): Promise<PageSummary> {
+  if (!pool.configured()) throw new Error("GEMINI_API_KEYS is not set");
+  let lastError: unknown;
+  const models = geminiModels();
+  for (const [i, model] of models.entries()) {
+    try {
+      return tagModel(await generateSummary(parts, model, allowFinalBackoff && i === models.length - 1), model, source);
+    } catch (e) {
+      lastError = e;
+      console.warn(`    ${model} failed: ${(e as Error).message.split("\n")[0].slice(0, 100)}`);
+    }
+  }
+  throw lastError;
+}
+
+/** Summarizes a page from its article TEXT. Numbers come straight from the text, so nothing is misread. */
+export async function summarizeStories(prompt: string): Promise<PageSummary> {
+  return withModelChain([{ text: prompt }], "text", true);
+}
+
 /**
- * Tries each Gemini model in turn; the last one waits and retries on rate limits.
+ * Summarizes a page from its IMAGE (fallback when a page has no article text).
  * Groq is used only when GROQ_FALLBACK=true: its image model can't read small Bangla print
  * and was seen inventing headlines, which is worse than no digest for exam prep.
  */
 export async function summarizePage(image: { mime: string; data: Buffer }, prompt: string): Promise<PageSummary> {
   const useGroq = process.env.GROQ_FALLBACK === "true" && groqConfigured();
-  let lastError: unknown;
-  if (pool.configured()) {
-    const models = geminiModels();
-    for (const [i, model] of models.entries()) {
-      const isLast = i === models.length - 1;
-      try {
-        return tagModel(await summarizePageGemini(image, prompt, model, isLast && !useGroq), model);
-      } catch (e) {
-        lastError = e;
-        console.warn(`    ${model} failed: ${(e as Error).message.split("\n")[0].slice(0, 100)}`);
-      }
-    }
+  try {
+    return await withModelChain(await imageParts(image, prompt), "image", !useGroq);
+  } catch (e) {
+    if (!useGroq) throw e;
   }
-  if (useGroq) return tagModel(await summarizePageGroq(image, prompt), `groq:${process.env.GROQ_MODEL || "qwen/qwen3.8-27b"}`);
-  throw lastError ?? new Error("GEMINI_API_KEYS is not set");
+  return tagModel(await summarizePageGroq(image, prompt), `groq:${process.env.GROQ_MODEL || "qwen/qwen3.8-27b"}`);
 }
 
 /** Text-only duplicate grouping; used when Groq isn't available. Returns null if Gemini isn't set up. */
