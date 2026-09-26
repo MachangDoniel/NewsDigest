@@ -6,17 +6,16 @@ DerivedData/
 *.moved-aside
 *.hmap
 *.xcuserstate
+build/
 
 ## xcodegen output (regenerate with `xcodegen generate`)
-Biddabari.xcodeproj/
+NewsDigest.xcodeproj/
 Generated/
 
-.DS_Store
-
-## NewsDigest server
+## Server
 server/node_modules/
 server/.env
 server/.sessions/
 server/out/
 
-build/
+.DS_Store

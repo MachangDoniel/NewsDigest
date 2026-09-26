@@ -1,40 +1,13 @@
-name: Biddabari
+name: NewsDigest
 options:
-  bundleIdPrefix: com.biddabari
+  bundleIdPrefix: com.newsdigest
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "17.0"
 packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
     from: "2.20.0"
 targets:
-  Biddabari:
-    type: application
-    platform: iOS
-    deploymentTarget: "16.0"
-    sources:
-      - path: Biddabari
-    info:
-      path: Generated/Info.plist
-      properties:
-        CFBundleDisplayName: Biddabari
-        UILaunchScreen: {}
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
-        UIRequiresFullScreen: false
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.biddabari.app
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
-        SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        DEVELOPMENT_TEAM: ""
-        CODE_SIGN_STYLE: Automatic
   NewsDigest:
     type: application
     platform: iOS
@@ -44,7 +17,7 @@ targets:
     dependencies:
       - package: Supabase
     info:
-      path: Generated/NewsDigest-Info.plist
+      path: Generated/Info.plist
       properties:
         CFBundleDisplayName: NewsDigest
         UILaunchScreen: {}
@@ -58,7 +31,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.biddabari.newsdigest
+        PRODUCT_BUNDLE_IDENTIFIER: com.newsdigest.app
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
