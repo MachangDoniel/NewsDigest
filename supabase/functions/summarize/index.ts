@@ -77,6 +77,29 @@ async function gemini(parts: Part[], preferred: string | undefined, jsonMode: bo
   return null;
 }
 
+/** Groq text model in JSON mode (text sources only; Groq's image model can't read Bangla print). */
+async function groqJSON(prompt: string, model: string): Promise<{ text: string; model: string } | null> {
+  for (const key of keys("GROQ_API_KEYS")) {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        ...(model.startsWith("openai/") ? { reasoning_effort: "low" } : {}),
+        messages: [{ role: "user", content: prompt }],
+      }),
+    }).catch(() => null);
+    if (res?.ok) {
+      const data = await res.json();
+      const text = data.choices?.[0]?.message?.content ?? "";
+      if (text) return { text, model: `groq:${model}` };
+    }
+  }
+  return null;
+}
+
 async function groqChat(messages: { role: string; content: string }[]): Promise<{ text: string; model: string } | null> {
   for (const key of keys("GROQ_API_KEYS")) {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -115,7 +138,14 @@ async function summarize(body: any) {
     return json({ ok: false, reason: "error", message: "Nothing to summarize" }, 400);
   }
 
-  const out = await gemini(parts, body.model, true);
+  // "groq:<model>" picks Groq first (text only); otherwise Gemini first, Groq as the backup for text.
+  const chosen = String(body.model ?? "auto");
+  const groqModel = chosen.startsWith("groq:") ? chosen.slice(5) : GROQ_TEXT_MODEL;
+  const textPrompt = source === "text" ? (parts[0] as { text: string }).text : "";
+  let out: { text: string; model: string } | null = null;
+  if (chosen.startsWith("groq:") && source === "text") out = await groqJSON(textPrompt, groqModel);
+  if (!out) out = await gemini(parts, chosen.startsWith("groq:") ? undefined : chosen, true);
+  if (!out && source === "text" && !chosen.startsWith("groq:")) out = await groqJSON(textPrompt, groqModel);
   if (!out) return json({ ok: false, reason: "quota", message: "All AI keys are busy or out of quota right now." });
   try {
     const parsed = JSON.parse(out.text);

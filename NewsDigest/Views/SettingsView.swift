@@ -62,7 +62,7 @@ struct SettingsView: View {
                 } header: {
                     Text("✨ Summarize")
                 } footer: {
-                    Text("Uses the Gemini and Groq keys stored in your Supabase project, so no key is needed on this phone. If every key is busy or out of quota, you get the paper's own text for the page instead. If the model you pick is busy, the next one is tried automatically.")
+                    Text("Uses the Gemini and Groq keys stored in your Supabase project, so no key is needed on this phone. If every key is busy or out of quota, you get the paper's own text for the page instead. If the model you pick is busy, the next one is tried automatically. Groq models read the article text only; pages without text use Gemini.")
                 }
 
                 Section("When a digest fails") {

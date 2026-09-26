@@ -13,6 +13,8 @@ enum AI {
         ("gemini-3.8-flash", "Gemini 3.8 Flash"),
         ("gemini-3.7-flash", "Gemini 3.7 Flash"),
         ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite (fastest)"),
+        ("groq:openai/gpt-oss-120b", "Groq GPT-OSS 120B"),
+        ("groq:llama-3.3-70b-versatile", "Groq Llama 3.3 70B"),
     ]
 
     /// "auto" = each paper in its own language (Daily Star English, Prothom Alo Bangla).
