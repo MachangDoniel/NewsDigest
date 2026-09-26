@@ -1,10 +1,14 @@
 import type { Browser, BrowserContext, Page } from "playwright";
 import { LoginError, NotPublishedError, type PageImage } from "../types.js";
-import { assertNoChallenge, dhakaDate, downloadPages, readPageImageTags } from "./common.js";
+import { assertNoChallenge, dhakaDate, downloadPages, type TagList } from "./common.js";
 
 const LOGIN_URL = "https://profile.thedailystar.net/login?redirect_to=https://epaper.thedailystar.net/Login/LandingPage";
-// Same reader markup as Prothom Alo (ASP.NET e-paper platform). Fallback: any large page image.
-const PAGE_IMG = "img.img_jpg";
+/**
+ * After login the reader opens at /DhakaEdition?... with a thumbnail strip of every page:
+ *   <img id="page440418" pageid="440418" src=".../TDS/2026/09/26/Bangladesh/MAI/5_01/3c077f31_01_tn.jpg">
+ * The readable page image is the same path with _mr.jpg instead of _tn.jpg.
+ */
+const THUMB = 'img[id^="page"][pageid]';
 
 async function signIn(context: BrowserContext): Promise<Page> {
   const email = process.env.DAILYSTAR_EMAIL;
@@ -32,41 +36,16 @@ async function logLayout(page: Page) {
   const info = await page.evaluate(() => ({
     url: location.href,
     title: document.title,
-    links: [...document.querySelectorAll("a[href]")]
-      .map((a) => `${(a.textContent ?? "").trim().slice(0, 40)} -> ${a.getAttribute("href")}`)
-      .filter((l) => !/facebook|twitter|youtube|instagram|linkedin|mailto:|tel:/i.test(l))
-      .slice(0, 40),
+    pageidEls: [...document.querySelectorAll("[pageid],[pgid],[page_id]")]
+      .slice(0, 12)
+      .map((e) => `${e.tagName} ${[...e.attributes].map((a) => `${a.name}=${a.value.slice(0, 90)}`).join(" ")}`),
     images: [...document.images]
       .filter((i) => i.naturalWidth > 200)
-      .slice(0, 10)
-      .map((i) => ({ src: i.src.slice(0, 160), w: i.naturalWidth, h: i.naturalHeight, cls: i.className, attrs: [...i.attributes].map((a) => a.name).join(",") })),
-    iframes: [...document.querySelectorAll("iframe")].map((f) => f.src.slice(0, 160)).slice(0, 5),
-    canvases: [...document.querySelectorAll("canvas")].map((c) => `${c.width}x${c.height} #${c.id} .${c.className}`).slice(0, 5),
+      .slice(0, 8)
+      .map((i) => `${i.naturalWidth}x${i.naturalHeight} ${i.src.slice(0, 160)}`),
   }));
   console.log("  --- Daily Star layout (for fixing the scraper) ---");
   console.log(JSON.stringify(info, null, 1));
-
-  const pagesInfo = async () =>
-    page.evaluate(() => ({
-      url: location.href,
-      pageidEls: [...document.querySelectorAll("[pageid],[pgid],[data-pageid],[page_id]")]
-        .slice(0, 30)
-        .map((e) => `${e.tagName} ${[...e.attributes].map((a) => `${a.name}=${a.value.slice(0, 90)}`).join(" ")}`),
-      epfs: [...new Set([...document.querySelectorAll("img")].map((i) => i.getAttribute("src") ?? "").filter((s) => s.includes("epfs")))].slice(0, 40),
-      scripts: [...document.scripts]
-        .map((s) => s.textContent ?? "")
-        .flatMap((t) => t.match(/.{0,80}(pgid|pageid|_mr\.jpg|_hr\.jpg|highres).{0,120}/gi) ?? [])
-        .slice(0, 20),
-    }));
-  console.log("  --- pages (current view) ---");
-  console.log(JSON.stringify(await pagesInfo(), null, 1));
-  for (const view of ["1", "3"]) {
-    const alt = page.url().replace(/view=\d/, `view=${view}`);
-    if (alt === page.url()) break;
-    await page.goto(alt, { waitUntil: "networkidle", timeout: 30_000 }).catch(() => undefined);
-    console.log(`  --- pages (view=${view}) ---`);
-    console.log(JSON.stringify(await pagesInfo(), null, 1));
-  }
 }
 
 export async function captureDailyStar(browser: Browser): Promise<PageImage[]> {
@@ -75,21 +54,36 @@ export async function captureDailyStar(browser: Browser): Promise<PageImage[]> {
     const page = await signIn(context);
     const { y, m, d } = dhakaDate();
 
-    // After login we land on the e-paper's landing page; let it settle.
     await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
     await assertNoChallenge(page);
-    const found = await page.waitForSelector(PAGE_IMG, { timeout: 30_000 }).catch(() => null);
-    if (!found) {
+    if (!(await page.waitForSelector(THUMB, { timeout: 30_000 }).catch(() => null))) {
       await logLayout(page);
       throw new Error(`Daily Star reader layout not recognized at ${page.url()}. The selector in dailyStar.ts needs updating.`);
     }
 
-    const tags = await readPageImageTags(page, PAGE_IMG);
+    const tags: TagList = await page.$$eval(THUMB, (imgs) =>
+      imgs.map((img, i) => {
+        const src = img.getAttribute("src") ?? "";
+        const pageid = img.getAttribute("pageid") ?? String(i);
+        const pageNo = Number(src.match(/_(\d+)_tn\.jpg/)?.[1] ?? i + 1);
+        const option = document.querySelector(`#ddl_Pages option[value="${pageid}"]`);
+        return {
+          urls: [src.replace(/_tn\.jpg/, "_mr.jpg")],
+          pageNo,
+          sequence: i + 1,
+          name: option?.textContent?.replace(/^\s*\d+\s*[:.-]?\s*/, "").trim() || `Page ${pageNo}`,
+          id: pageid,
+        };
+      }),
+    );
+
     if (!tags.some((t) => t.urls.some((u) => u.includes(`/${y}/${m}/${d}/`)))) {
       throw new NotPublishedError(`Daily Star edition for ${y}-${m}-${d} is not up yet`);
     }
-    const { pages } = await downloadPages(context, tags, page.url());
-    if (pages.length === 0) throw new LoginError("Daily Star page images could not be downloaded (subscription/login?)");
+    const { pages, failed } = await downloadPages(context, tags, page.url());
+    if (pages.length === 0 || failed.length > tags.length / 2) {
+      throw new LoginError("Daily Star page images could not be downloaded (subscription/login?)");
+    }
     return pages;
   } finally {
     await context.close();
