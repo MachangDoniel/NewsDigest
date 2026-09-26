@@ -98,10 +98,11 @@ xcodegen generate
 open NewsDigest.xcodeproj
 ```
 
-Run on a simulator or device. Then, in the app's **Settings**:
-1. Enter your Supabase **project URL** and **anon/publishable key**. Never use the service key in the app.
-2. Sign in with the user you created in Supabase.
-3. Optional: add a Gemini API key to use ✨ Summarize in the Papers tab.
+Run on a simulator or device, then sign in on the **Today** tab with the user you created in Supabase.
+
+The app has this project's Supabase URL and publishable key built in ([`AppConfig.swift`](NewsDigest/AppConfig.swift)). If you run your own copy, change them there or under **Settings → Use a different Supabase project**. Never put the service key in the app.
+
+**Ask → BCS summary** needs the `summarize` Edge Function ([`supabase/functions/summarize`](supabase/functions/summarize/index.ts)): deploy it in Supabase → Edge Functions, and add `GEMINI_API_KEYS` (and optionally `GROQ_API_KEYS`) under Edge Functions → Secrets.
 
 ## Configuration
 
