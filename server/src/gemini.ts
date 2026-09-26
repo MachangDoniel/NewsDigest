@@ -1,5 +1,6 @@
 import { CATEGORIES, type PageSummary } from "./types.js";
 import { KeyPool } from "./keys.js";
+import { splitHalves } from "./image.js";
 import { groqConfigured, parseGroups, summarizePageGroq } from "./groq.js";
 
 const RESPONSE_SCHEMA = {
@@ -49,11 +50,19 @@ const pool = new KeyPool("GEMINI_API_KEYS", "GEMINI_API_KEY");
 
 async function summarizePageGemini(image: { mime: string; data: Buffer }, prompt: string, model: string, backoff: boolean): Promise<PageSummary> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const halves = await splitHalves(image.data);
+  const note =
+    halves.length > 1
+      ? "\n\nThe page is given as two images: the TOP half, then the BOTTOM half, overlapping slightly. Treat them as one page and don't repeat a story that appears in the overlap. Read numbers and dates carefully, including Bangla digits (০-৯)."
+      : "";
   const body = {
     contents: [
       {
         role: "user",
-        parts: [{ inline_data: { mime_type: image.mime, data: image.data.toString("base64") } }, { text: prompt }],
+        parts: [
+          ...halves.map((h) => ({ inline_data: { mime_type: h.mime, data: h.data.toString("base64") } })),
+          { text: prompt + note },
+        ],
       },
     ],
     generationConfig: {
@@ -77,6 +86,12 @@ async function summarizePageGemini(image: { mime: string; data: Buffer }, prompt
   const text = json.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
   if (!text) return { sections: [], mcqs: [] };
   return JSON.parse(text) as PageSummary;
+}
+
+function tagModel(summary: PageSummary, model: string): PageSummary {
+  for (const section of summary.sections) for (const item of section.items) item.model = model;
+  for (const q of summary.mcqs) q.model = model;
+  return summary;
 }
 
 /** GEMINI_MODEL first, then GEMINI_FALLBACK_MODELS (comma-separated) when a model is overloaded. */
@@ -103,14 +118,14 @@ export async function summarizePage(image: { mime: string; data: Buffer }, promp
     for (const [i, model] of models.entries()) {
       const isLast = i === models.length - 1;
       try {
-        return await summarizePageGemini(image, prompt, model, isLast && !useGroq);
+        return tagModel(await summarizePageGemini(image, prompt, model, isLast && !useGroq), model);
       } catch (e) {
         lastError = e;
         console.warn(`    ${model} failed: ${(e as Error).message.split("\n")[0].slice(0, 100)}`);
       }
     }
   }
-  if (useGroq) return summarizePageGroq(image, prompt);
+  if (useGroq) return tagModel(await summarizePageGroq(image, prompt), `groq:${process.env.GROQ_MODEL || "qwen/qwen3.8-27b"}`);
   throw lastError ?? new Error("GEMINI_API_KEYS is not set");
 }
 

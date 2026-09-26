@@ -28,14 +28,27 @@ struct DigestItem: Codable, Hashable {
     let keyFacts: [String]
     let bcsRelevance: String
     let page: Int
+    let model: String?
 
     var isHigh: Bool { bcsRelevance == "high" }
+    /// Read by a lighter fallback model, which sometimes misreads numbers (e.g. Bangla digits).
+    var needsCheck: Bool { ModelCheck.isLight(model) }
+}
+
+enum ModelCheck {
+    static func isLight(_ model: String?) -> Bool {
+        guard let model else { return false }
+        return model.contains("lite") || model.hasPrefix("groq")
+    }
 }
 
 struct Mcq: Codable, Hashable {
     let question: String
     let options: [String]
     let answer: String
+    var model: String? = nil
+
+    var needsCheck: Bool { ModelCheck.isLight(model) }
 }
 
 struct RunStatus: Codable, Hashable {

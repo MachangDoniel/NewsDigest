@@ -135,6 +135,12 @@ struct ItemCard: View {
                 }
             }
 
+            if saved.item.needsCheck {
+                Label("Read by a lighter AI model. Check numbers and dates on the page.", systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+
             HStack(spacing: 18) {
                 if let onOpenPage {
                     Button { onOpenPage(saved) } label: {
@@ -170,6 +176,11 @@ struct McqCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Q\(index). \(mcq.question)").font(.subheadline.weight(.semibold))
+            if mcq.needsCheck {
+                Label("From a lighter AI model. Verify the answer.", systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
             ForEach(mcq.options, id: \.self) { option in
                 Button { withAnimation(.snappy) { picked = option } } label: {
                     HStack {

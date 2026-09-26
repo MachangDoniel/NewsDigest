@@ -25,6 +25,8 @@ export interface DigestItem {
   keyFacts: string[];
   bcsRelevance: "high" | "medium";
   page: number;
+  /** Model that read the page; the app warns when it was a lighter fallback model. */
+  model?: string;
 }
 
 export interface DigestSection {
@@ -36,6 +38,7 @@ export interface Mcq {
   question: string;
   options: string[];
   answer: string;
+  model?: string;
 }
 
 export interface PageSummary {
