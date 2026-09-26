@@ -75,6 +75,13 @@ final class DigestStore: ObservableObject {
         authState = .signedIn
     }
 
+    /// Calls a Supabase Edge Function as the signed-in user (e.g. `summarize`).
+    func invokeFunction<T: Decodable, B: Encodable>(_ name: String, body: B) async throws -> T {
+        guard let client else { throw StoreError.notConfigured }
+        guard authState == .signedIn else { throw StoreError.signedOut }
+        return try await client.functions.invoke(name, options: FunctionInvokeOptions(body: body))
+    }
+
     func signOut() async {
         try? await client?.auth.signOut()
         authState = client == nil ? .unconfigured : .signedOut
@@ -157,8 +164,13 @@ final class DigestStore: ObservableObject {
 }
 
 enum StoreError: LocalizedError {
-    case notConfigured
-    var errorDescription: String? { "Connect your Supabase project in Settings first." }
+    case notConfigured, signedOut
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured: "Connect your Supabase project in Settings first."
+        case .signedOut: "Sign in on the Today tab to use ✨ Summarize."
+        }
+    }
 }
 
 enum DiskCache {

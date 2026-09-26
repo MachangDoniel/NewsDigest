@@ -3,6 +3,7 @@ import SwiftUI
 /// One day's digest: status banners, paper + category filters, cards, and practice MCQs.
 struct DayDigestView: View {
     @EnvironmentObject private var store: DigestStore
+    @EnvironmentObject private var router: Router
     let date: String
 
     @State private var digests: [Digest] = []
@@ -17,6 +18,11 @@ struct DayDigestView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
                 ForEach(store.cachedStatus(date).filter { $0.state != "ok" }, id: \.self) { StatusBanner(status: $0) }
+
+                if mcqCount > 0 {
+                    Button { router.practice(date) } label: { practiceBanner }
+                        .buttonStyle(.plain)
+                }
 
                 Section {
                     content
@@ -92,13 +98,29 @@ struct DayDigestView: View {
                 ForEach(items) { ItemCard(saved: $0, onOpenPage: { reader = $0 }) }
             }
 
-            if !mcqs.isEmpty {
-                Label("Practice MCQs", systemImage: "checklist")
-                    .font(.title3.weight(.bold))
-                    .padding(.top, 16)
-                ForEach(Array(mcqs.enumerated()), id: \.offset) { i, q in McqCard(index: i + 1, mcq: q) }
-            }
         }
+    }
+
+    private var mcqCount: Int { digests.reduce(0) { $0 + $1.mcqs.count } }
+
+    private var practiceBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checklist")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Practice \(mcqCount) MCQs").font(.headline)
+                Text("Test yourself on \(DigestDate.pretty(date).lowercased() == "today" ? "today's" : "this day's") news")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     // MARK: - Data
@@ -121,7 +143,6 @@ struct DayDigestView: View {
         return Category.all.compactMap { c in dict[c].map { (c, $0) } }
     }
 
-    private var mcqs: [Mcq] { category == nil ? visibleDigests.flatMap(\.mcqs) : [] }
 
     private func load() async {
         if digests.isEmpty { digests = store.cached(date) }

@@ -97,6 +97,7 @@ struct ItemCard: View {
     let saved: SavedItem
     var showDate = false
     var onOpenPage: ((SavedItem) -> Void)?
+    @State private var chatURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -142,8 +143,19 @@ struct ItemCard: View {
                 }
             }
 
+            if saved.item.source == "paper" {
+                Label("Not summarized: AI was busy, so this is the paper's own text.", systemImage: "text.quote")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             if let excerpt = saved.item.excerpt, !excerpt.isEmpty {
-                FromThePaper(headline: saved.item.sourceHeadline, excerpt: excerpt, tint: saved.paper.color)
+                FromThePaper(
+                    headline: saved.item.source == "paper" ? nil : saved.item.sourceHeadline,
+                    excerpt: excerpt,
+                    tint: saved.paper.color,
+                    startOpen: saved.item.source == "paper"
+                )
             }
 
             if saved.item.needsCheck {
@@ -159,6 +171,11 @@ struct ItemCard: View {
                     }
                 }
                 Spacer()
+                Button { chatURL = AskChatGPT.url(AskChatGPT.prompt(for: saved)) } label: {
+                    Label("Ask ChatGPT", systemImage: "bubble.left.and.text.bubble.right")
+                        .labelStyle(.iconOnly)
+                }
+                .accessibilityLabel("Ask ChatGPT about this story")
                 ShareLink(item: shareText) { Image(systemName: "square.and.arrow.up") }
                 Button { store.toggleBookmark(saved) } label: {
                     Image(systemName: store.isBookmarked(saved) ? "bookmark.fill" : "bookmark")
@@ -171,6 +188,7 @@ struct ItemCard: View {
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .sheet(item: $chatURL) { SafariSheet(url: $0).ignoresSafeArea() }
     }
 
     private var shareText: String {
@@ -184,7 +202,14 @@ struct FromThePaper: View {
     let headline: String?
     let excerpt: String
     let tint: Color
-    @State private var open = false
+    @State private var open: Bool
+
+    init(headline: String?, excerpt: String, tint: Color, startOpen: Bool = false) {
+        self.headline = headline
+        self.excerpt = excerpt
+        self.tint = tint
+        _open = State(initialValue: startOpen)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -216,24 +241,37 @@ struct FromThePaper: View {
 struct McqCard: View {
     let index: Int
     let mcq: Mcq
-    @State private var picked: String?
+    var paper: Paper? = nil
+    /// Pass a binding to track answers outside (Practice tab score); otherwise kept locally.
+    var picked: Binding<String?>? = nil
+    @State private var localPick: String?
+    @State private var chatURL: URL?
+
+    private var pick: String? { picked?.wrappedValue ?? localPick }
+    private func choose(_ option: String) {
+        if let picked { picked.wrappedValue = option } else { localPick = option }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Q\(index). \(mcq.question)").font(.subheadline.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text("Q\(index). \(mcq.question)").font(.subheadline.weight(.semibold))
+                Spacer(minLength: 0)
+                if let paper { PaperBadge(paper: paper) }
+            }
             if mcq.needsCheck {
                 Label("From a lighter AI model. Verify the answer.", systemImage: "exclamationmark.triangle")
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
             ForEach(mcq.options, id: \.self) { option in
-                Button { withAnimation(.snappy) { picked = option } } label: {
+                Button { withAnimation(.snappy) { choose(option) } } label: {
                     HStack {
                         Text(option).font(.subheadline).multilineTextAlignment(.leading)
                         Spacer()
-                        if picked != nil, option == mcq.answer {
+                        if pick != nil, option == mcq.answer {
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        } else if picked == option {
+                        } else if pick == option {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
                         }
                     }
@@ -241,20 +279,30 @@ struct McqCard: View {
                     .background(background(for: option), in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
-                .disabled(picked != nil)
+                .disabled(pick != nil)
+            }
+            if pick != nil {
+                Button { chatURL = AskChatGPT.url(AskChatGPT.prompt(for: mcq, paper: paper)) } label: {
+                    Label("Explain with ChatGPT", systemImage: "bubble.left.and.text.bubble.right")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .transition(.opacity)
             }
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .sensoryFeedback(trigger: picked) { _, new in
+        .sensoryFeedback(trigger: pick) { _, new in
             new == nil ? nil : (new == mcq.answer ? .success : .error)
         }
+        .sheet(item: $chatURL) { SafariSheet(url: $0).ignoresSafeArea() }
     }
 
     private func background(for option: String) -> Color {
-        guard picked != nil else { return Color(.tertiarySystemFill) }
+        guard pick != nil else { return Color(.tertiarySystemFill) }
         if option == mcq.answer { return .green.opacity(0.18) }
-        if option == picked { return .red.opacity(0.18) }
+        if option == pick { return .red.opacity(0.18) }
         return Color(.tertiarySystemFill)
     }
 }

@@ -6,9 +6,8 @@ struct SettingsView: View {
     @State private var url = ""
     @State private var anonKey = ""
 
-    @State private var geminiKey = ""
-    @AppStorage(GeminiClient.modelDefaultsKey) private var model = GeminiClient.defaultModel
-    @AppStorage(Prompts.languageKey) private var language = "auto"
+    @AppStorage(AI.modelKey) private var model = "auto"
+    @AppStorage(AI.languageKey) private var language = "auto"
 
     var body: some View {
         NavigationStack {
@@ -51,13 +50,9 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    SecureField("Gemini API key", text: $geminiKey)
-                        .onSubmit { Keychain.set(geminiKey, for: GeminiClient.keyName) }
-                    Button("Save key") { Keychain.set(geminiKey, for: GeminiClient.keyName) }
-                        .disabled(geminiKey.isEmpty)
-                    TextField("Model", text: $model)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    Picker("AI model", selection: $model) {
+                        ForEach(AI.models, id: \.id) { Text($0.label).tag($0.id) }
+                    }
                     Picker("Summary language", selection: $language) {
                         Text("Same as paper").tag("auto")
                         Text("English").tag("en")
@@ -65,9 +60,9 @@ struct SettingsView: View {
                         Text("Both").tag("both")
                     }
                 } header: {
-                    Text("✨ Summarize on this phone")
+                    Text("✨ Summarize")
                 } footer: {
-                    Text(GeminiClient.hasKey ? "Key saved in Keychain." : "Free key from aistudio.google.com. Used only for the Summarize button in the Papers tab.")
+                    Text("Uses the Gemini and Groq keys stored in your Supabase project, so no key is needed on this phone. If every key is busy or out of quota, you get the paper's own text for the page instead. If the model you pick is busy, the next one is tried automatically.")
                 }
 
                 Section("When a digest fails") {
@@ -79,7 +74,6 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .onAppear {
                 url = store.usesCustomProject ? store.supabaseURL : ""
-                geminiKey = Keychain.get(GeminiClient.keyName) ?? ""
             }
         }
     }

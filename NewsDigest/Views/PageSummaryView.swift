@@ -1,15 +1,19 @@
 import SwiftUI
 
-/// On-device Gemini summary of the captured page, plus follow-up chat.
+/// BCS summary of the page being viewed (via the `summarize` Edge Function), plus follow-up chat.
+/// When no AI model is available, it shows the paper's own stories for the page instead.
 struct PageSummaryView: View {
     let paper: Paper
     let capture: PageCapture.Captured
 
+    @EnvironmentObject private var store: DigestStore
     @Environment(\.dismiss) private var dismiss
     @State private var sections: [DigestSection] = []
     @State private var mcqs: [Mcq] = []
     @State private var loading = true
     @State private var error: String?
+    /// Set when AI was unavailable and we're showing the paper's stories instead.
+    @State private var unavailable: String?
     @State private var chat: [(role: String, text: String)] = []
     @State private var question = ""
     @State private var asking = false
@@ -33,6 +37,8 @@ struct PageSummaryView: View {
 
                         if loading {
                             ForEach(0..<2, id: \.self) { _ in SkeletonCard() }
+                        } else if let unavailable {
+                            paperFallback(unavailable)
                         } else if let error {
                             ContentUnavailableView("Summary failed", systemImage: "exclamationmark.triangle", description: Text(error))
                             Button("Try again") { Task { await summarize() } }.frame(maxWidth: .infinity)
@@ -49,7 +55,7 @@ struct PageSummaryView: View {
                             }
                             if !mcqs.isEmpty {
                                 Label("Practice MCQs", systemImage: "checklist").font(.headline).padding(.top, 6)
-                                ForEach(Array(mcqs.enumerated()), id: \.offset) { McqCard(index: $0 + 1, mcq: $1) }
+                                ForEach(Array(mcqs.enumerated()), id: \.offset) { McqCard(index: $0 + 1, mcq: $1, paper: paper) }
                             }
                         }
 
@@ -64,7 +70,7 @@ struct PageSummaryView: View {
                 .onChange(of: chat.count) { withAnimation { proxy.scrollTo("bottom") } }
             }
             .background(Color(.systemGroupedBackground))
-            .safeAreaInset(edge: .bottom) { if !loading && error == nil { askBar } }
+            .safeAreaInset(edge: .bottom) { if !loading && error == nil && unavailable == nil { askBar } }
             .navigationTitle("BCS summary")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
@@ -93,16 +99,53 @@ struct PageSummaryView: View {
         .background(.bar)
     }
 
+    /// The paper's own headlines and text, shown when every AI key is busy or out of quota.
+    @ViewBuilder
+    private func paperFallback(_ message: String) -> some View {
+        Label(message + " Here's what the paper says on this page.", systemImage: "text.quote")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        if capture.stories.isEmpty {
+            ContentUnavailableView(
+                "No text for this page",
+                systemImage: "doc.text.magnifyingglass",
+                description: Text("Sign in to the e-paper in the Papers tab, then try again.")
+            )
+        }
+        ForEach(capture.stories, id: \.self) { story in
+            VStack(alignment: .leading, spacing: 8) {
+                Text(story.headline).font(.headline)
+                Text(story.body.count > 700 ? String(story.body.prefix(700)) + " …" : story.body)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .textSelection(.enabled)
+                ForEach(story.captions, id: \.self) { caption in
+                    Label(caption, systemImage: "photo").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        Button("Try AI again") { Task { await summarize() } }.frame(maxWidth: .infinity)
+    }
+
     private func summarize() async {
         loading = true
         error = nil
+        unavailable = nil
         defer { loading = false }
         do {
-            let out = try await GeminiClient.summarize(image: capture.data, mime: capture.mime, paper: paper)
-            sections = out.sections.filter { !$0.items.isEmpty }
-            mcqs = out.mcqs.filter { $0.options.contains($0.answer) }
+            let out = try await AI.summarize(capture, paper: paper, store: store)
+            if let reason = out.unavailable {
+                unavailable = reason
+            } else {
+                sections = out.sections.filter { !$0.items.isEmpty }
+                mcqs = out.mcqs.filter { $0.options.contains($0.answer) }
+            }
         } catch {
-            self.error = error.localizedDescription
+            // Network or server trouble: still show the paper's text if we have it.
+            if capture.stories.isEmpty { self.error = error.localizedDescription } else { unavailable = "AI couldn't be reached." }
         }
     }
 
@@ -115,18 +158,13 @@ struct PageSummaryView: View {
         asking = true
         defer { asking = false }
 
-        // Page image + summary as context, then the running conversation.
-        let summaryText = sections.flatMap { s in s.items.map { "- \($0.headline): \($0.bullets.joined(separator: " "))" } }.joined(separator: "\n")
-        var contents: [GeminiClient.Content] = [
-            .init(role: "user", parts: [
-                .image(capture.data, mime: capture.mime),
-                .text("This is a page from today's \(paper.name). You are helping a BCS exam candidate. Your summary so far:\n\(summaryText)\n\nAnswer follow-up questions concisely. Use Bangla if asked."),
-            ]),
-            .init(role: "model", parts: [.text("Understood. Ask me anything about this page.")]),
-        ]
-        contents += chat.map { .init(role: $0.role == "user" ? "user" : "model", parts: [.text($0.text)]) }
+        // The page's own text (or the summary) as context, then the running conversation.
+        let context: String = capture.stories.isEmpty
+            ? sections.flatMap { s in s.items.map { "- \($0.headline): \($0.bullets.joined(separator: " ")) \($0.keyFacts.joined(separator: "; "))" } }.joined(separator: "\n")
+            : capture.stories.map { "## \($0.headline)\n\($0.body)" }.joined(separator: "\n\n")
+        let messages = chat.map { AI.ChatMessage(role: $0.role, text: $0.text) }
         do {
-            chat.append(("model", try await GeminiClient.generate(contents)))
+            chat.append(("model", try await AI.chat(context: "\(paper.name), page \(capture.pageNo.map(String.init) ?? "?")\n\(context)", messages: messages, store: store)))
         } catch {
             chat.append(("model", "⚠️ \(error.localizedDescription)"))
         }

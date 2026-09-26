@@ -154,7 +154,7 @@ struct ReaderView: View {
     private func shareToAI() async {
         do {
             let page = try await PageCapture.capture(web.webView)
-            let prompt = Prompts.share(paper: paper.name)
+            let prompt = Prompts.share(paper: paper)
             UIPasteboard.general.string = prompt
             var items: [Any] = [prompt]
             if let image = page.image { items.insert(image, at: 0) }

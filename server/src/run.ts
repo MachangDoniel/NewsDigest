@@ -13,6 +13,8 @@ import {
   ChallengeError,
   LoginError,
   NotPublishedError,
+  type Category,
+  type DigestItem,
   type DigestSection,
   type Mcq,
   type PageImage,
@@ -66,6 +68,39 @@ function attachSource(summary: PageSummary, page: PageImage) {
   }
 }
 
+/** Rough category from the page's name, for stories kept without AI. */
+function categoryForPage(name: string): Category {
+  const n = name.toLowerCase();
+  if (/international|world|আন্তর্জাতিক|বিশ্ব/.test(n)) return "International Affairs";
+  if (/business|economy|অর্থ|বাণিজ্য/.test(n)) return "Economy";
+  if (/sport|খেলা/.test(n)) return "Sports";
+  if (/tech|science|বিজ্ঞান|প্রযুক্তি/.test(n)) return "Science & Tech";
+  if (/showbiz|entertainment|literature|weekend|বিনোদন|ছুটির|গোল্লাছুট|অভিমত|মতামত|opinion|editorial/.test(n)) return "Others";
+  return "Bangladesh Affairs";
+}
+
+/** The paper's own stories for a page, used when no AI model is available. Not summarized. */
+function paperFallback(page: PageImage): PageSummary {
+  const items: DigestItem[] = (page.stories ?? [])
+    .filter((s) => s.headline && s.body.length > 120)
+    .map((s) => {
+      const lines = s.body.split("\n").map((l) => l.trim()).filter(Boolean);
+      const bodyStart = lines.length > 1 && lines[0].length < 60 ? lines.slice(1) : lines;
+      return {
+        headline: s.headline,
+        bullets: [],
+        keyFacts: [],
+        bcsRelevance: "medium",
+        page: page.pageNo,
+        pageId: page.pageId,
+        sourceHeadline: s.headline,
+        excerpt: excerptOf(bodyStart.join(" "), 600),
+        source: "paper",
+      };
+    });
+  return { sections: items.length ? [{ category: categoryForPage(page.name), items }] : [], mcqs: [] };
+}
+
 function stateFor(err: unknown): RunState {
   if (err instanceof LoginError) return "login_expired";
   if (err instanceof ChallengeError) return "challenge";
@@ -98,8 +133,12 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], date: 
       console.log(`  page ${p.pageNo} ${p.name}: ${n} items (from ${stories.length ? `text, ${stories.length} stories` : "image"})`);
       summaries.push(s);
     } catch (e) {
-      // One bad page shouldn't sink the whole digest.
-      console.warn(`  page ${p.pageNo} failed: ${(e as Error).message}`);
+      // One bad page shouldn't sink the whole digest. If every AI key is out of quota,
+      // keep the paper's own headlines and opening lines instead of dropping the page.
+      const fallback = paperFallback(p);
+      const n = fallback.sections.reduce((a, x) => a + x.items.length, 0);
+      console.warn(`  page ${p.pageNo} failed (${(e as Error).message.split("\n")[0].slice(0, 80)}); ${n ? `kept ${n} stories from the paper` : "no text to keep"}`);
+      if (n) summaries.push(fallback);
     }
   }
   if (summaries.length === 0) throw new Error("Gemini failed on every page");

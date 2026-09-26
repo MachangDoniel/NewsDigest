@@ -43,7 +43,8 @@ export interface DigestItem {
   excerpt?: string;
   /** Model that read the page; the app warns when a lighter model read an image. */
   model?: string;
-  source?: "image" | "text";
+  /** "paper" = AI unavailable; the paper's own headline and text, not summarized. */
+  source?: "image" | "text" | "paper";
   /** Index of the story in the page's article list (text mode only). */
   story?: number;
 }
