@@ -341,3 +341,16 @@ struct SkeletonCard: View {
         .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever()) { on = true } }
     }
 }
+
+extension View {
+    /// Stops content that scrolls under the title bar from showing through (e.g. above pinned
+    /// filters), without hiding the large title. iOS 26's hard scroll edge; older iOS already has an opaque bar.
+    @ViewBuilder
+    func solidTopEdge() -> some View {
+        if #available(iOS 26.0, *) {
+            scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            self
+        }
+    }
+}

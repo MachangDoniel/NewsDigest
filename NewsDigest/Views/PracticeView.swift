@@ -77,8 +77,7 @@ struct PracticeView: View {
                         .padding(16)
                     }
                     .background(Color(.systemGroupedBackground))
-                    .toolbarBackground(Color(.systemGroupedBackground), for: .navigationBar)
-                    .toolbarBackground(.visible, for: .navigationBar)
+                    .solidTopEdge()
                     .refreshable { await load() }
                     .task(id: dateString) { await load() }
                 }
