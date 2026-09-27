@@ -13,7 +13,7 @@ Reading two full newspapers every day takes hours. NewsDigest reads them for you
 ## How it works
 
 ```
-GitHub Actions (06:00, 08:00, 10:00 Dhaka time)
+GitHub Actions (hourly from 06:00 Dhaka time until done)
   └─ Playwright signs in to each e-paper with your credentials
   └─ fetches every story's text (headline, body, captions) from the e-paper reader
   └─ Gemini reads the text → BCS-relevant stories, key facts, MCQs
