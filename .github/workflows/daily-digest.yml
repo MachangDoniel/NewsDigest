@@ -2,10 +2,9 @@ name: Daily digest
 
 on:
   schedule:
-    # 06:00, 08:00 and 10:00 Dhaka time (UTC+6). Later runs only retry papers that aren't done yet.
-    - cron: "0 0 * * *"
-    - cron: "0 2 * * *"
-    - cron: "0 4 * * *"
+    # Every hour from 06:00 to 23:00 Dhaka time (UTC+6). Once a paper is done, later runs skip it;
+    # once both are done, runs stop before installing the browser.
+    - cron: "0 0-17 * * *"
   workflow_dispatch:
     inputs:
       paper:
@@ -37,9 +36,20 @@ jobs:
           cache-dependency-path: server/package-lock.json
 
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+
+      - name: Check if today is already done
+        id: check
+        if: ${{ inputs.force != true }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run check-done -- ${{ inputs.paper && format('--paper {0}', inputs.paper) || '' }}
+
+      - if: steps.check.outputs.done != 'true'
+        run: npx playwright install --with-deps chromium
 
       - name: Build digest
+        if: steps.check.outputs.done != 'true'
         env:
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "digest": "tsx src/run.ts",
-    "save-session": "tsx scripts/save-session.ts",
+    "check-done": "tsx scripts/check-done.ts",
+    "save-session":"tsx scripts/save-session.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

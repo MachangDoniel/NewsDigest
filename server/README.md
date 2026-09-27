@@ -44,7 +44,7 @@ Optional repository **variables** (not secrets):
 - `DIGEST_LANG`: `auto` (default; each paper in its own language), or `en`, `bn` or `both`
 
 ### 4. First run
-Go to GitHub → **Actions → Daily digest → Run workflow**. After that it runs automatically at 06:00, 08:00 and 10:00 Dhaka time. The later runs only retry papers that aren't done yet.
+Go to GitHub → **Actions → Daily digest → Run workflow**. After that it runs automatically every hour from 06:00 to 23:00 Dhaka time. Once a paper is done, later runs skip it, and once both are done the runs stop early.
 
 ## Local testing
 ```bash
