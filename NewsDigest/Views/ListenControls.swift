@@ -103,11 +103,20 @@ struct ListenControls: View {
                 .accessibilityLabel("Speed \(Self.label(reader.rate))")
 
                 Spacer()
-                control("gobackward.5", "Back 5 seconds") { reader.seek(by: -5) }
+                // Gemini voice: 5 seconds. Apple's voice: a sentence.
+                if reader.bySentence {
+                    control("backward.fill", "Previous sentence") { reader.seek(by: -5) }
+                } else {
+                    control("gobackward.5", "Back 5 seconds") { reader.seek(by: -5) }
+                }
                 Spacer()
                 control(reader.isPlaying ? "pause.fill" : "play.fill", reader.isPlaying ? "Pause" : "Play", size: .title) { reader.togglePause() }
                 Spacer()
-                control("goforward.5", "Forward 5 seconds") { reader.seek(by: 5) }
+                if reader.bySentence {
+                    control("forward.fill", "Next sentence") { reader.seek(by: 5) }
+                } else {
+                    control("goforward.5", "Forward 5 seconds") { reader.seek(by: 5) }
+                }
                 Spacer()
 
                 Button { reader.stop() } label: {
