@@ -23,12 +23,19 @@ GitHub Actions (hourly from 06:00 Dhaka time until done)
                      ▼
         NewsDigest iOS app (SwiftUI)
   Today · Archive · Papers · Settings
+                     │
+                     ▼
+  Supabase Edge Function "summarize" (holds every API key)
+  └─ ✨ BCS summary and chat for any page   (Gemini / Groq)
+  └─ Run digest now                          (starts the GitHub workflow)
+  └─ Read aloud                              (Gemini voice, saved per story section)
 ```
 
 - **Real article text, not OCR.** Both e-papers serve each story's text to signed-in subscribers. Gemini summarizes that text one page at a time, so numbers, names and dates are copied exactly. The answer comes back as structured JSON: category, headline, bullets, key facts, relevance (high or medium) and page. Each item also keeps the paper's own headline and opening lines, shown as **From the paper**. Reading the page image is only a fallback for pages without text.
 - **Model fallback.** If the main Gemini model is overloaded or out of quota, the job tries the next one: `gemini-3.8-flash` → `3.7-flash` → `3.5-flash-lite`.
 - **Duplicate merging.** A text-only Groq call lists which stories are the same news. The code then merges them, so the model never writes facts itself.
-- **Retries.** Later runs only redo papers that aren't done yet. Failures (expired login, CAPTCHA, edition not out yet) are shown as banners in the app.
+- **Retries.** The job runs every hour from 06:00 until both papers are done; later runs only redo papers that aren't done yet, and stop straight away once both are. Failures (expired login, CAPTCHA, edition not out yet) are shown as banners in the app. If the papers come out early, **Run digest now** in the app starts a run right away.
+- **Read aloud.** The 🎧 button in a paper reads the page's stories, or the open article, in a natural Gemini voice (Bangla and English). Stories are read in short sections: the server makes each section's audio once and keeps it, so replays are instant, and the next sections are prepared while one plays. The voice uses its own Gemini key (`GEMINI_TTS_KEYS`), so it never uses the summary quota. Apple's free offline voice is the fallback, or can be chosen in Settings.
 
 ## The app
 
@@ -43,33 +50,41 @@ GitHub Actions (hourly from 06:00 Dhaka time until done)
     <td align="center" width="25%"><img src="docs/screenshots/summary-chat.png" alt="BCS summary with chat"><br><sub><b>BCS summary + chat</b><br>ask follow-up questions</sub></td>
     <td align="center" width="25%"><img src="docs/screenshots/archive-search.png" alt="Archive search"><br><sub><b>Archive</b><br>search every past digest</sub></td>
     <td align="center" width="25%"><img src="docs/screenshots/papers.png" alt="Papers tab"><br><sub><b>Papers</b><br>read the e-papers in-app</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/read-aloud.png" alt="Read-aloud controls"><br><sub><b>Read aloud</b><br>⏪ ⏯ ⏩, speed, stop</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="25%"><img src="docs/screenshots/read-aloud-pill.png" alt="Read aloud while reading"><br><sub><b>While reading</b><br>controls fold into a small pill</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/settings-voice.png" alt="Voice setting"><br><sub><b>Voice</b><br>Gemini or Apple</sub></td>
+    <td width="25%"></td>
     <td width="25%"></td>
   </tr>
 </table>
 
 | Tab | What it does |
 |---|---|
-| **Today** | Today's digest. Step to earlier days with ◀ ▶, swipe, or a calendar. Filter by paper, category or high relevance. Each story shows the paper's own opening lines, opens its page of the e-paper, and has an **Ask** menu (ChatGPT, Gemini, Claude, Grok and more). |
+| **Today** | Today's digest. While a paper is still missing, **Run digest now** builds it immediately instead of waiting for the next hourly run. Step to earlier days with ◀ ▶, swipe, or a calendar. Filter by paper, category or high relevance. Each story shows the paper's own opening lines, opens its page of the e-paper, and has an **Ask** menu (ChatGPT, Gemini, Claude, Grok and more). |
 | **Practice** | All of the day's MCQs in one place, with a score. Past days via ◀ ▶ or a calendar. After answering, ask an AI to explain. |
 | **Archive** | Every past day, grouped by month. Search across all digests. Bookmarked stories for revision. Days you've opened work offline. |
-| **Papers** | Both e-papers in an in-app browser that remembers your login. Tap a story box to open the article. **Ask** gives an instant BCS summary of the page or article, with follow-up chat, or opens it in ChatGPT, Gemini, Claude, Grok and more with the text already filled in. |
-| **Settings** | Your digest account, the AI model (Gemini or Groq) and the summary language. No API key is needed on the phone: summaries run through a Supabase Edge Function that holds the keys. |
+| **Papers** | Both e-papers in an in-app browser that remembers your login. Tap a story box to open the article. **Ask** gives an instant BCS summary of the page or article, with follow-up chat, or opens it in ChatGPT, Gemini, Claude, Grok and more with the text already filled in. **🎧 Read aloud** reads the page's stories one by one; the controls stay hidden behind a small pill (tap it for ⏪ ⏯ ⏩, speed and stop), and the lock screen and headphone buttons skip stories too. |
+| **Settings** | Your digest account, the AI model (Gemini or Groq), the summary language, and the read-aloud voice (Gemini or Apple). No API key is needed on the phone: summaries run through a Supabase Edge Function that holds the keys. |
 
 ## Repository layout
 
 ```
 NewsDigest/                 iOS app (SwiftUI, iOS 17+)
 ├── Models/                 Paper, digest models
-├── Services/               Supabase store, Gemini client, page capture, Keychain
+├── Services/               Supabase store, AI client, page capture, read aloud, Keychain
 └── Views/                  Today, Archive, Papers/Reader, Summary, Settings
 server/                     Daily digest job (Node + TypeScript + Playwright)
 ├── src/papers/             Daily Star and Prothom Alo scrapers
 ├── src/gemini.ts           Page summaries with model fallback
 ├── src/groq.ts             Duplicate grouping (and optional page fallback)
 ├── src/merge.ts            Merge pages → one digest per paper
-└── src/run.ts              Entry point
-supabase/schema.sql         Tables + row-level security
-.github/workflows/          Scheduled daily job
+├── src/run.ts              Entry point
+└── scripts/                check-done (skip finished runs), cleanup-speech, save-session
+supabase/functions/summarize  Edge Function: summaries, chat, Run digest now, read-aloud voice
+supabase/schema.sql         Tables, row-level security, speech storage bucket
+.github/workflows/          Hourly digest job
 project.yml                 XcodeGen project definition
 ```
 
@@ -78,6 +93,8 @@ project.yml                 XcodeGen project definition
 Everything below is free. It takes about 15 minutes.
 
 ### 1. Server and daily job
+
+All the Terminal commands (deploying the Edge Function, secrets, running the digest) are in **[COMMANDS.md](COMMANDS.md)**, step by step.
 
 Follow **[server/README.md](server/README.md)**. It covers creating the Supabase project, getting a Gemini API key, adding GitHub secrets, and the first run. In short:
 
@@ -110,7 +127,7 @@ The app has this project's Supabase URL and publishable key built in ([`AppConfi
 - `GH_REF` (optional): the branch to run, `main` by default
 
 **Read aloud** (the 🎧 button in a paper) uses Gemini's voice through the same function, or Apple's built-in voice (Settings → Read aloud). Each story section is made once and kept in a private Storage bucket, so replaying it, on any device, is instant and free. To set it up:
-- Run the `speech` bucket part of [`supabase/schema.sql`](supabase/schema.sql).
+- Run the `speech` bucket part of [`supabase/schema.sql`](supabase/schema.sql) (already done for the built-in project).
 - Add the Edge Function secret `GEMINI_TTS_KEYS`: keys from a **separate** Google AI Studio project. Gemini's limits are per project, so reading aloud then never uses the summary quota.
 - Optional secrets: `GEMINI_TTS_VOICE` (default `Kore`; others include `Puck`, `Charon`, `Aoede`) and `GEMINI_TTS_MODEL` (default `gemini-3.8-flash-tts`, falling back to `gemini-3.8-flash-lite-tts`).
 - Audio is about 2.8 MB a minute, so the daily workflow deletes files older than 3 days. Change that with the `SPEECH_KEEP_DAYS` repository variable.
@@ -126,12 +143,23 @@ The app has this project's Supabase URL and publishable key built in ([`AppConfi
 | `PROTHOMALO_EMAIL`, `PROTHOMALO_PASSWORD` | secret | Prothom Alo e-paper login |
 | `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS` | variable | Override the model chain |
 | `DIGEST_LANG` | variable | `auto` (default: Daily Star in English, Prothom Alo in Bangla), or force `en`, `bn` or `both` |
+| `SPEECH_KEEP_DAYS` | variable | Days to keep saved read-aloud audio (default 3) |
+
+Edge Function secrets (Supabase → Edge Functions → Secrets). Commands for these are in [COMMANDS.md](COMMANDS.md#secrets-for-the-edge-function).
+
+| Secret | Purpose |
+|---|---|
+| `GEMINI_API_KEYS`, `GROQ_API_KEYS` | ✨ BCS summary and chat |
+| `GEMINI_TTS_KEYS` | Read-aloud voice. Keys from a separate Google project |
+| `GEMINI_TTS_VOICE`, `GEMINI_TTS_MODEL` | Optional. Voice (default `Kore`) and model |
+| `GH_DISPATCH_TOKEN`, `GH_REPO`, `GH_REF` | Run digest now |
 
 ## Limitations
 
 - **Summaries can still contain mistakes.** Check key facts against **From the paper** or the page itself (tap **Page N**) before memorizing them. Stories that had to be read from a page image by the lighter model are marked with an orange warning.
 - **Scrapers depend on each site's layout.** If a paper redesigns its reader, the job reports "layout not recognized" and logs the new structure for fixing.
 - **CAPTCHAs are never bypassed.** If a site shows one, that day's run stops and the app suggests ✨ Summarize instead.
+- **The Gemini voice has a daily limit.** When `GEMINI_TTS_KEYS` run out for the day, reading switches to Apple's voice, which sounds robotic in Bangla. Saved audio takes about 2.8 MB a minute of Storage, which is why it's deleted after a few days.
 - **Groq isn't used to read pages by default.** Its image model misreads small Bangla print and was seen inventing headlines. Enable it with `GROQ_FALLBACK=true` only if you accept that risk.
 
 ## Disclaimer
