@@ -5,8 +5,8 @@ import NaturalLanguage
 
 /// Reads a page's stories aloud, one story at a time. Uses the Gemini voice through the
 /// `speak` action of the `summarize` Edge Function, which makes each section once and keeps it,
-/// and falls back to Apple's built-in voices when that isn't available. Back/forward skip between stories, from the app or from the lock
-/// screen and headphones.
+/// and falls back to Apple's built-in voices when that isn't available. Back/forward jump 5 seconds
+/// within the section being read, from the app or from the lock screen and headphones.
 @MainActor
 final class SpeechReader: NSObject, ObservableObject,
     @preconcurrency AVSpeechSynthesizerDelegate, @preconcurrency AVAudioPlayerDelegate {
@@ -97,15 +97,24 @@ final class SpeechReader: NSObject, ObservableObject,
         }
     }
 
-    func next() {
+    private func next() {
         guard isActive else { return }
         if index + 1 < stories.count { play(story: index + 1) } else { stop() }
     }
 
-    /// Back to the start of this story, or to the previous one when already at its start.
-    func previous() {
+    /// Jumps back or forward within the section being read, staying inside it.
+    /// Apple's voice can't jump inside a section, so there it restarts the section (back) or
+    /// moves to the next one (forward).
+    func seek(by seconds: TimeInterval) {
         guard isActive else { return }
-        play(story: chunk == 0 && index > 0 ? index - 1 : index)
+        if let player {
+            player.currentTime = min(max(0, player.currentTime + seconds), max(0, player.duration - 0.1))
+            updateNowPlaying()
+        } else if seconds < 0 {
+            speakChunk()
+        } else {
+            advance()
+        }
     }
 
     func stop() {
@@ -326,8 +335,10 @@ final class SpeechReader: NSObject, ObservableObject,
         center.playCommand.addTarget { [weak self] _ in self?.resume(); return .success }
         center.pauseCommand.addTarget { [weak self] _ in self?.pause(); return .success }
         center.togglePlayPauseCommand.addTarget { [weak self] _ in self?.togglePause(); return .success }
-        center.nextTrackCommand.addTarget { [weak self] _ in self?.next(); return .success }
-        center.previousTrackCommand.addTarget { [weak self] _ in self?.previous(); return .success }
+        center.skipForwardCommand.preferredIntervals = [5]
+        center.skipBackwardCommand.preferredIntervals = [5]
+        center.skipForwardCommand.addTarget { [weak self] _ in self?.seek(by: 5); return .success }
+        center.skipBackwardCommand.addTarget { [weak self] _ in self?.seek(by: -5); return .success }
     }
 
     private func updateNowPlaying() {
@@ -343,7 +354,7 @@ final class SpeechReader: NSObject, ObservableObject,
 
     deinit {
         let center = MPRemoteCommandCenter.shared()
-        [center.playCommand, center.pauseCommand, center.togglePlayPauseCommand, center.nextTrackCommand, center.previousTrackCommand]
+        [center.playCommand, center.pauseCommand, center.togglePlayPauseCommand, center.skipForwardCommand, center.skipBackwardCommand]
             .forEach { $0.removeTarget(nil) }
     }
 }

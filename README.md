@@ -50,7 +50,7 @@ GitHub Actions (hourly from 06:00 Dhaka time until done)
     <td align="center" width="25%"><img src="docs/screenshots/summary-chat.png" alt="BCS summary with chat"><br><sub><b>BCS summary + chat</b><br>ask follow-up questions</sub></td>
     <td align="center" width="25%"><img src="docs/screenshots/archive-search.png" alt="Archive search"><br><sub><b>Archive</b><br>search every past digest</sub></td>
     <td align="center" width="25%"><img src="docs/screenshots/papers.png" alt="Papers tab"><br><sub><b>Papers</b><br>read the e-papers in-app</sub></td>
-    <td align="center" width="25%"><img src="docs/screenshots/read-aloud.png" alt="Read-aloud controls"><br><sub><b>Read aloud</b><br>⏪ ⏯ ⏩, speed, stop</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/read-aloud.png" alt="Read-aloud controls"><br><sub><b>Read aloud</b><br>±5 s, pause, speed, stop</sub></td>
   </tr>
   <tr>
     <td align="center" width="25%"><img src="docs/screenshots/read-aloud-pill.png" alt="Read aloud while reading"><br><sub><b>While reading</b><br>controls fold into a small pill</sub></td>
@@ -65,7 +65,7 @@ GitHub Actions (hourly from 06:00 Dhaka time until done)
 | **Today** | Today's digest. While a paper is still missing, **Run digest now** builds it immediately instead of waiting for the next hourly run. Step to earlier days with ◀ ▶, swipe, or a calendar. Filter by paper, category or high relevance. Each story shows the paper's own opening lines, opens its page of the e-paper, and has an **Ask** menu (ChatGPT, Gemini, Claude, Grok and more). |
 | **Practice** | All of the day's MCQs in one place, with a score. Past days via ◀ ▶ or a calendar. After answering, ask an AI to explain. |
 | **Archive** | Every past day, grouped by month. Search across all digests. Bookmarked stories for revision. Days you've opened work offline. |
-| **Papers** | Both e-papers in an in-app browser that remembers your login. Tap a story box to open the article. **Ask** gives an instant BCS summary of the page or article, with follow-up chat, or opens it in ChatGPT, Gemini, Claude, Grok and more with the text already filled in. **🎧 Read aloud** reads the page's stories one by one; the controls stay hidden behind a small pill (tap it for ⏪ ⏯ ⏩, speed and stop), and the lock screen and headphone buttons skip stories too. |
+| **Papers** | Both e-papers in an in-app browser that remembers your login. Tap a story box to open the article. **Ask** gives an instant BCS summary of the page or article, with follow-up chat, or opens it in ChatGPT, Gemini, Claude, Grok and more with the text already filled in. **🎧 Read aloud** reads the page's stories one by one; the controls stay hidden behind a small pill in the paper's color, like **Ask** (tap it to jump back or forward 5 seconds, pause, change speed or stop), and the lock screen and headphone buttons jump 5 seconds too. |
 | **Settings** | Your digest account, the AI model (Gemini or Groq), the summary language, and the read-aloud voice (Gemini or Apple). No API key is needed on the phone: summaries run through a Supabase Edge Function that holds the keys. |
 
 ## Repository layout
