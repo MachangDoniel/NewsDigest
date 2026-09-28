@@ -89,6 +89,16 @@ final class DigestStore: ObservableObject {
         }
     }
 
+    private struct RunDigestRequest: Encodable { let action = "run_digest" }
+    private struct RunDigestResponse: Decodable { let ok: Bool; let message: String? }
+
+    /// Starts today's server digest now instead of waiting for the next hourly run.
+    /// The `summarize` function triggers the GitHub workflow, so no GitHub token lives on the phone.
+    func runDigestNow() async throws -> (ok: Bool, message: String) {
+        let res: RunDigestResponse = try await invokeFunction("summarize", body: RunDigestRequest())
+        return (res.ok, res.message ?? (res.ok ? "Digest started." : "Couldn't start the digest."))
+    }
+
     func signOut() async {
         try? await client?.auth.signOut()
         authState = client == nil ? .unconfigured : .signedOut

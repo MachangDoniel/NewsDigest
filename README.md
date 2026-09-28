@@ -104,6 +104,11 @@ The app has this project's Supabase URL and publishable key built in ([`AppConfi
 
 **Ask → BCS summary** needs the `summarize` Edge Function ([`supabase/functions/summarize`](supabase/functions/summarize/index.ts)): deploy it in Supabase → Edge Functions, and add `GEMINI_API_KEYS` (and optionally `GROQ_API_KEYS`) under Edge Functions → Secrets.
 
+**Run digest now** (on the Today tab, when today's digest is missing) uses the same function to start the GitHub workflow right away. Add these Edge Function secrets too:
+- `GH_DISPATCH_TOKEN`: a fine-grained GitHub token for this repo only, with **Actions: Read and write**
+- `GH_REPO`: `owner/name`, e.g. `MachangDoniel/NewsDigest`
+- `GH_REF` (optional): the branch to run, `main` by default
+
 ## Configuration
 
 | Variable | Where | Purpose |
