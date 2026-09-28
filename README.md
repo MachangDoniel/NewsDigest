@@ -109,6 +109,11 @@ The app has this project's Supabase URL and publishable key built in ([`AppConfi
 - `GH_REPO`: `owner/name`, e.g. `MachangDoniel/NewsDigest`
 - `GH_REF` (optional): the branch to run, `main` by default
 
+**Read aloud** (the 🎧 button in a paper) uses Microsoft Azure's natural voices through the same function, and Apple's built-in voice when Azure isn't set up. The free tier (F0) covers about 500,000 characters a month. Create a Speech resource in the [Azure portal](https://portal.azure.com), then add these Edge Function secrets:
+- `AZURE_SPEECH_KEY`: the resource's key
+- `AZURE_SPEECH_REGION`: its region, e.g. `southeastasia`
+- `AZURE_VOICE_BN`, `AZURE_VOICE_EN` (optional): other voices; the defaults are `bn-BD-NabanitaNeural` / `bn-BD-PradeepNeural` and `en-US-JennyNeural` / `en-US-GuyNeural`, picked in Settings → Read aloud
+
 ## Configuration
 
 | Variable | Where | Purpose |

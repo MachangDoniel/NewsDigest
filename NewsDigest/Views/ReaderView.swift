@@ -112,6 +112,7 @@ struct ReaderView: View {
     var pageId: String? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: DigestStore
     @StateObject private var web = WebController()
     @State private var summary: PageCapture.Captured?
     @State private var capturing = false
@@ -196,7 +197,7 @@ struct ReaderView: View {
                 error = "There's no text on this page to read. Open a page with articles, or tap a story to open it."
                 return
             }
-            speech.start(page.stories, title: [paper.name, page.pageName].compactMap { $0 }.joined(separator: " · "))
+            speech.start(page.stories, title: [paper.name, page.pageName].compactMap { $0 }.joined(separator: " · "), store: store)
         } catch {
             self.error = error.localizedDescription
         }

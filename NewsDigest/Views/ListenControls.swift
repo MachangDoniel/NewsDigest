@@ -85,6 +85,8 @@ struct ListenControls: View {
 
             if let problem = reader.problem {
                 Text(problem).font(.caption).foregroundStyle(.orange)
+            } else if let note = reader.note {
+                Text(note).font(.caption).foregroundStyle(.secondary)
             }
 
             HStack {

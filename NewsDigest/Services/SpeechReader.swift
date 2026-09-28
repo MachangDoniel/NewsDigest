@@ -1,20 +1,34 @@
 import AVFoundation
+import CryptoKit
 import MediaPlayer
 import NaturalLanguage
 
-/// Reads a page's stories aloud with Apple's built-in voices, one story at a time.
-/// Back/forward skip between stories, from the app or from the lock screen and headphones.
+/// Reads a page's stories aloud, one story at a time. Uses the natural Azure voice through the
+/// `speak` action of the `summarize` Edge Function, and falls back to Apple's built-in voices
+/// when that isn't available. Back/forward skip between stories, from the app or from the lock
+/// screen and headphones.
 @MainActor
-final class SpeechReader: NSObject, ObservableObject, @preconcurrency AVSpeechSynthesizerDelegate {
+final class SpeechReader: NSObject, ObservableObject,
+    @preconcurrency AVSpeechSynthesizerDelegate, @preconcurrency AVAudioPlayerDelegate {
+    static let voiceKey = "readAloudVoice"
+    /// Choices for Settings. "natural-*" use Azure; "apple" stays on the phone.
+    static let voices: [(id: String, label: String)] = [
+        ("natural-female", "Natural, female"),
+        ("natural-male", "Natural, male"),
+        ("apple", "Apple (offline)"),
+    ]
+
     @Published private(set) var stories: [PaperStory] = []
     @Published private(set) var index = 0
     @Published private(set) var isPlaying = false
-    /// Set when this iPhone has no voice for the story's language (usually Bangla).
+    /// Why reading can't go on, e.g. no Apple voice for the language (usually Bangla).
     @Published private(set) var problem: String?
+    /// Shown when the natural voice isn't available and Apple's voice is used instead.
+    @Published private(set) var note: String?
     @Published var rate: Float = UserDefaults.standard.object(forKey: "speechRate") as? Float ?? 1.0 {
         didSet {
             UserDefaults.standard.set(rate, forKey: "speechRate")
-            if isPlaying { speakChunk() }  // apply the new speed right away
+            if let player { player.rate = rate } else if isPlaying { speakChunk() }
         }
     }
 
@@ -24,10 +38,16 @@ final class SpeechReader: NSObject, ObservableObject, @preconcurrency AVSpeechSy
     var current: PaperStory? { stories.indices.contains(index) ? stories[index] : nil }
 
     private let synth = AVSpeechSynthesizer()
+    private var player: AVAudioPlayer?
     private var chunks: [String] = []
     private var chunk = 0
-    /// Only the utterance we last started may advance the queue; stopped ones are ignored.
+    /// Only output we last started may advance the queue; stopped or stale ones are ignored.
+    private var token = UUID()
     private var utterance: AVSpeechUtterance?
+    private var fetches: [String: Task<Data?, Never>] = [:]
+    /// Set after the natural voice fails, so the rest of this session doesn't wait on it.
+    private var naturalOff = false
+    private weak var store: DigestStore?
     private var title = ""
     private var commandsSet = false
 
@@ -36,11 +56,16 @@ final class SpeechReader: NSObject, ObservableObject, @preconcurrency AVSpeechSy
         synth.delegate = self
     }
 
+    private var voiceSetting: String { UserDefaults.standard.string(forKey: Self.voiceKey) ?? "natural-female" }
+    private var useNatural: Bool { voiceSetting != "apple" && !naturalOff }
+
     // MARK: - Controls
 
-    func start(_ stories: [PaperStory], title: String) {
+    func start(_ stories: [PaperStory], title: String, store: DigestStore) {
         self.stories = stories.filter { !$0.headline.isEmpty || !$0.body.isEmpty }
         self.title = title
+        self.store = store
+        note = nil
         guard !self.stories.isEmpty else { return }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -52,14 +77,24 @@ final class SpeechReader: NSObject, ObservableObject, @preconcurrency AVSpeechSy
 
     func pause() {
         guard isPlaying else { return }
-        synth.pauseSpeaking(at: .word)
+        if let player { player.pause() } else { synth.pauseSpeaking(at: .word) }
         isPlaying = false
         updateNowPlaying()
     }
 
     func resume() {
         guard isActive, !isPlaying else { return }
-        if synth.isPaused { synth.continueSpeaking(); isPlaying = true; updateNowPlaying() } else { speakChunk() }
+        if let player {
+            isPlaying = true
+            player.play()
+            updateNowPlaying()
+        } else if synth.isPaused {
+            isPlaying = true
+            synth.continueSpeaking()
+            updateNowPlaying()
+        } else {
+            speakChunk()
+        }
     }
 
     func next() {
@@ -74,8 +109,9 @@ final class SpeechReader: NSObject, ObservableObject, @preconcurrency AVSpeechSy
     }
 
     func stop() {
-        utterance = nil
-        synth.stopSpeaking(at: .immediate)
+        stopOutput()
+        fetches.values.forEach { $0.cancel() }
+        fetches = [:]
         stories = []
         isPlaying = false
         problem = nil
@@ -87,18 +123,63 @@ final class SpeechReader: NSObject, ObservableObject, @preconcurrency AVSpeechSy
 
     private func play(story: Int) {
         index = story
-        let s = stories[story]
-        // Headline first, then the body a paragraph at a time so skipping and speed changes stay quick.
-        let paragraphs = s.body.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        chunks = (s.headline.isEmpty ? [] : [s.headline]) + paragraphs
+        chunks = Self.chunks(of: stories[story])
         chunk = 0
         speakChunk()
     }
 
+    /// Headline first, then the body in pieces of a few paragraphs, so skipping,
+    /// and the wait before each piece of natural audio, stay short.
+    private static func chunks(of story: PaperStory) -> [String] {
+        let paragraphs = story.body.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        var out: [String] = story.headline.isEmpty ? [] : [story.headline]
+        var piece = ""
+        for p in paragraphs {
+            if !piece.isEmpty, piece.count + p.count > 1200 { out.append(piece); piece = "" }
+            piece += piece.isEmpty ? p : "\n" + p
+        }
+        if !piece.isEmpty { out.append(piece) }
+        return out
+    }
+
+    private func stopOutput() {
+        token = UUID()
+        utterance = nil
+        synth.stopSpeaking(at: .immediate)
+        player?.stop()
+        player = nil
+    }
+
     private func speakChunk() {
+        stopOutput()
         guard chunks.indices.contains(chunk) else { return next() }
         let text = chunks[chunk]
-        guard let voice = Self.voice(for: stories[index].headline + " " + text) else {
+        let lang = Self.language(of: stories[index].headline + " " + text)
+        isPlaying = true
+        updateNowPlaying()
+        guard useNatural else { return speakWithApple(text, lang: lang) }
+
+        let token = token
+        Task {
+            let data = await audio(for: text, lang: lang)
+            guard token == self.token else { return }
+            prefetchNext()
+            guard let data, let player = try? AVAudioPlayer(data: data) else {
+                return speakWithApple(text, lang: lang)
+            }
+            player.delegate = self
+            player.enableRate = true
+            player.rate = rate
+            player.prepareToPlay()
+            self.player = player
+            if isPlaying { player.play() }  // paused while loading: resume() starts it
+        }
+    }
+
+    private func speakWithApple(_ text: String, lang: String) {
+        guard let voice = Self.appleVoice(for: lang) else {
             problem = "This iPhone has no voice for this language. Add one in Settings → Accessibility → Spoken Content → Voices."
             pause()
             return
@@ -108,25 +189,105 @@ final class SpeechReader: NSObject, ObservableObject, @preconcurrency AVSpeechSy
         u.voice = voice
         u.rate = AVSpeechUtteranceDefaultSpeechRate * rate
         u.postUtteranceDelay = chunk == 0 ? 0.5 : 0.25  // a beat after the headline
-        utterance = nil
-        synth.stopSpeaking(at: .immediate)
         utterance = u
         synth.speak(u)
         isPlaying = true
-        updateNowPlaying()
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish finished: AVSpeechUtterance) {
-        guard finished === utterance else { return }
+    private func advance() {
         chunk += 1
         speakChunk()
     }
 
-    /// The best installed voice for the text's language, preferring enhanced and premium voices.
-    private static func voice(for text: String) -> AVSpeechSynthesisVoice? {
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish finished: AVSpeechUtterance) {
+        guard finished === utterance else { return }
+        advance()
+    }
+
+    func audioPlayerDidFinishPlaying(_ finished: AVAudioPlayer, successfully flag: Bool) {
+        guard finished === player else { return }
+        player = nil
+        advance()
+    }
+
+    // MARK: - Natural voice
+
+    /// The natural audio for a piece of text: from the disk cache, a fetch already on its way, or the server.
+    private func audio(for text: String, lang: String) async -> Data? {
+        let gender = voiceSetting == "natural-male" ? "male" : "female"
+        let key = SHA256.hash(data: Data("\(gender)|\(lang)|\(text)".utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = Self.cacheDir.appendingPathComponent(key + ".mp3")
+        if let data = try? Data(contentsOf: file) { return data }
+        if let running = fetches[key] { return await running.value }
+
+        guard let store, store.authState == .signedIn else {
+            fallBack("Sign in on the Today tab for the natural voice. Using Apple's voice for now.")
+            return nil
+        }
+        let task = Task<Data?, Never> { [weak self] in
+            do {
+                let res: SpeakResponse = try await store.invokeFunction(
+                    "summarize", body: SpeakRequest(text: text, lang: lang, gender: gender))
+                if res.ok, let b64 = res.audio, let data = Data(base64Encoded: b64) {
+                    try? FileManager.default.createDirectory(at: Self.cacheDir, withIntermediateDirectories: true)
+                    try? data.write(to: file)
+                    return data
+                }
+                self?.fallBack((res.message ?? "The natural voice isn't available.") + " Using Apple's voice for now.")
+            } catch {
+                if !Task.isCancelled { self?.fallBack("The natural voice couldn't be reached. Using Apple's voice for now.") }
+            }
+            return nil
+        }
+        fetches[key] = task
+        let data = await task.value
+        fetches[key] = nil
+        return data
+    }
+
+    /// Starts fetching the next piece while this one plays, so there's no gap between them.
+    private func prefetchNext() {
+        guard useNatural else { return }
+        let text: String?
+        if chunks.indices.contains(chunk + 1) {
+            text = chunks[chunk + 1]
+        } else if stories.indices.contains(index + 1) {
+            text = Self.chunks(of: stories[index + 1]).first
+        } else {
+            text = nil
+        }
+        guard let text else { return }
+        let lang = Self.language(of: text)
+        Task { _ = await audio(for: text, lang: lang) }
+    }
+
+    private func fallBack(_ message: String) {
+        naturalOff = true
+        note = message
+    }
+
+    private struct SpeakRequest: Encodable {
+        let action = "speak"
+        let text: String
+        let lang: String
+        let gender: String
+    }
+    private struct SpeakResponse: Decodable { let ok: Bool; let audio: String?; let message: String? }
+
+    private static let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("speech", isDirectory: true)
+
+    // MARK: - Voices
+
+    /// "bn" for Bangla, otherwise "en".
+    private static func language(of text: String) -> String {
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(String(text.prefix(500)))
-        let lang = recognizer.dominantLanguage?.rawValue ?? "en"
+        return recognizer.dominantLanguage == .bengali ? "bn" : "en"
+    }
+
+    /// The best installed Apple voice for the language, preferring enhanced and premium voices.
+    private static func appleVoice(for lang: String) -> AVSpeechSynthesisVoice? {
         let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
         let region = Locale.current.region?.identifier ?? ""
         return voices.max { a, b in
