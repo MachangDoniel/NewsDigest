@@ -118,6 +118,9 @@ struct ReaderView: View {
     @State private var error: String?
     @State private var shareItems: ShareItems?
     @State private var aiSheet: AIChatSheet?
+    @StateObject private var speech = SpeechReader()
+    @State private var listenLoading = false
+    @State private var listenExpanded = false
 
     var body: some View {
         NavigationStack {
@@ -130,7 +133,7 @@ struct ReaderView: View {
                         }
                     }
 
-                summarizeButton
+                bottomBar
             }
             .navigationTitle(paper.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -150,6 +153,7 @@ struct ReaderView: View {
                 }
             }
             .onAppear { if web.webView.url == nil { web.open(paper.editionURL(for: date, pageId: pageId)) } }
+            .onDisappear { speech.stop() }
             .sheet(item: $summary) { PageSummaryView(paper: paper, capture: $0) }
             .sheet(item: $shareItems) { ActivityView(items: $0.items) }
             .sheet(item: $aiSheet) { AIChatSheetView(sheet: $0) }
@@ -164,9 +168,37 @@ struct ReaderView: View {
                     }
                 }
             }
-            .alert("Couldn't capture page", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            .alert("Couldn't use this page", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(error ?? "") }
+        }
+    }
+
+    /// Read aloud on the left, Ask on the right. The open read-aloud panel takes the full width.
+    private var bottomBar: some View {
+        HStack(alignment: .bottom) {
+            ListenControls(reader: speech, tint: paper.color, loading: listenLoading, onStart: { Task { await listen() } }, expanded: $listenExpanded)
+            if !listenExpanded {
+                Spacer()
+                summarizeButton
+            }
+        }
+        .padding(20)
+    }
+
+    /// Reads the stories on the page (or the open article) aloud.
+    private func listen() async {
+        listenLoading = true
+        defer { listenLoading = false }
+        do {
+            let page = try await PageCapture.capture(web.webView)
+            guard !page.stories.isEmpty else {
+                error = "There's no text on this page to read. Open a page with articles, or tap a story to open it."
+                return
+            }
+            speech.start(page.stories, title: [paper.name, page.pageName].compactMap { $0 }.joined(separator: " · "))
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 
@@ -187,7 +219,6 @@ struct ReaderView: View {
             .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
         }
         .disabled(capturing)
-        .padding(20)
     }
 
     /// Opens an AI app with the page's article text (or copies the page image when there's no text).
