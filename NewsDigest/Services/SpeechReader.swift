@@ -3,19 +3,18 @@ import CryptoKit
 import MediaPlayer
 import NaturalLanguage
 
-/// Reads a page's stories aloud, one story at a time. Uses the natural Azure voice through the
-/// `speak` action of the `summarize` Edge Function, and falls back to Apple's built-in voices
-/// when that isn't available. Back/forward skip between stories, from the app or from the lock
+/// Reads a page's stories aloud, one story at a time. Uses the Gemini voice through the
+/// `speak` action of the `summarize` Edge Function, which makes each section once and keeps it,
+/// and falls back to Apple's built-in voices when that isn't available. Back/forward skip between stories, from the app or from the lock
 /// screen and headphones.
 @MainActor
 final class SpeechReader: NSObject, ObservableObject,
     @preconcurrency AVSpeechSynthesizerDelegate, @preconcurrency AVAudioPlayerDelegate {
     static let voiceKey = "readAloudVoice"
-    /// Choices for Settings. "natural-*" use Azure; "apple" stays on the phone.
+    /// Choices for Settings. "gemini" goes through the server; "apple" stays on the phone.
     static let voices: [(id: String, label: String)] = [
-        ("natural-female", "Natural, female"),
-        ("natural-male", "Natural, male"),
-        ("apple", "Apple (offline)"),
+        ("gemini", "Gemini voice"),
+        ("apple", "Apple voice (free, offline)"),
     ]
 
     @Published private(set) var stories: [PaperStory] = []
@@ -56,7 +55,7 @@ final class SpeechReader: NSObject, ObservableObject,
         synth.delegate = self
     }
 
-    private var voiceSetting: String { UserDefaults.standard.string(forKey: Self.voiceKey) ?? "natural-female" }
+    private var voiceSetting: String { UserDefaults.standard.string(forKey: Self.voiceKey) ?? "gemini" }
     private var useNatural: Bool { voiceSetting != "apple" && !naturalOff }
 
     // MARK: - Controls
@@ -67,6 +66,7 @@ final class SpeechReader: NSObject, ObservableObject,
         self.store = store
         note = nil
         guard !self.stories.isEmpty else { return }
+        Self.pruneCache()
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try? AVAudioSession.sharedInstance().setActive(true)
         setUpRemoteCommands()
@@ -128,19 +128,36 @@ final class SpeechReader: NSObject, ObservableObject,
         speakChunk()
     }
 
-    /// Headline first, then the body in pieces of a few paragraphs, so skipping,
-    /// and the wait before each piece of natural audio, stay short.
+    /// Headline first, then the body in sections of about a paragraph. Gemini takes roughly
+    /// 0.4 s per second of audio, so short sections start quickly and the next is ready in time.
     private static func chunks(of story: PaperStory) -> [String] {
-        let paragraphs = story.body.split(whereSeparator: \.isNewline)
+        let sentences = story.body.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+            .flatMap { $0.count > 600 ? sentencesOf($0) : [$0] }
         var out: [String] = story.headline.isEmpty ? [] : [story.headline]
         var piece = ""
-        for p in paragraphs {
-            if !piece.isEmpty, piece.count + p.count > 1200 { out.append(piece); piece = "" }
+        for p in sentences {
+            if !piece.isEmpty, piece.count + p.count > 450 { out.append(piece); piece = "" }
             piece += piece.isEmpty ? p : "\n" + p
         }
         if !piece.isEmpty { out.append(piece) }
+        return out
+    }
+
+    /// Splits a long paragraph after "।", ".", "?" or "!".
+    private static func sentencesOf(_ text: String) -> [String] {
+        var out: [String] = []
+        var current = ""
+        for ch in text {
+            current.append(ch)
+            if "।.?!".contains(ch), current.count > 40 {
+                out.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            }
+        }
+        let rest = current.trimmingCharacters(in: .whitespaces)
+        if !rest.isEmpty { out.append(rest) }
         return out
     }
 
@@ -163,7 +180,7 @@ final class SpeechReader: NSObject, ObservableObject,
 
         let token = token
         Task {
-            let data = await audio(for: text, lang: lang)
+            let data = await audio(for: text)
             guard token == self.token else { return }
             prefetchNext()
             guard let data, let player = try? AVAudioPlayer(data: data) else {
@@ -212,30 +229,32 @@ final class SpeechReader: NSObject, ObservableObject,
 
     // MARK: - Natural voice
 
-    /// The natural audio for a piece of text: from the disk cache, a fetch already on its way, or the server.
-    private func audio(for text: String, lang: String) async -> Data? {
-        let gender = voiceSetting == "natural-male" ? "male" : "female"
-        let key = SHA256.hash(data: Data("\(gender)|\(lang)|\(text)".utf8)).map { String(format: "%02x", $0) }.joined()
-        let file = Self.cacheDir.appendingPathComponent(key + ".mp3")
+    /// The Gemini audio for a section: from this phone's cache, a fetch already on its way, or the
+    /// server (which sends its saved copy, or makes the audio once and saves it).
+    private func audio(for text: String) async -> Data? {
+        let key = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = Self.cacheDir.appendingPathComponent(key + ".wav")
         if let data = try? Data(contentsOf: file) { return data }
         if let running = fetches[key] { return await running.value }
 
         guard let store, store.authState == .signedIn else {
-            fallBack("Sign in on the Today tab for the natural voice. Using Apple's voice for now.")
+            fallBack("Sign in on the Today tab for the Gemini voice. Using Apple's voice for now.")
             return nil
         }
         let task = Task<Data?, Never> { [weak self] in
             do {
-                let res: SpeakResponse = try await store.invokeFunction(
-                    "summarize", body: SpeakRequest(text: text, lang: lang, gender: gender))
-                if res.ok, let b64 = res.audio, let data = Data(base64Encoded: b64) {
-                    try? FileManager.default.createDirectory(at: Self.cacheDir, withIntermediateDirectories: true)
-                    try? data.write(to: file)
-                    return data
+                let res: SpeakResponse = try await store.invokeFunction("summarize", body: SpeakRequest(text: text))
+                if res.ok, let link = res.url.flatMap(URL.init(string:)) {
+                    let (data, response) = try await URLSession.shared.data(from: link)
+                    if (response as? HTTPURLResponse)?.statusCode == 200 {
+                        try? FileManager.default.createDirectory(at: Self.cacheDir, withIntermediateDirectories: true)
+                        try? data.write(to: file)
+                        return data
+                    }
                 }
-                self?.fallBack((res.message ?? "The natural voice isn't available.") + " Using Apple's voice for now.")
+                self?.fallBack((res.message ?? "The Gemini voice isn't available.") + " Using Apple's voice for now.")
             } catch {
-                if !Task.isCancelled { self?.fallBack("The natural voice couldn't be reached. Using Apple's voice for now.") }
+                if !Task.isCancelled { self?.fallBack("The Gemini voice couldn't be reached. Using Apple's voice for now.") }
             }
             return nil
         }
@@ -245,20 +264,14 @@ final class SpeechReader: NSObject, ObservableObject,
         return data
     }
 
-    /// Starts fetching the next piece while this one plays, so there's no gap between them.
+    /// Starts fetching the next two sections while this one plays, so there's no gap between them.
     private func prefetchNext() {
         guard useNatural else { return }
-        let text: String?
-        if chunks.indices.contains(chunk + 1) {
-            text = chunks[chunk + 1]
-        } else if stories.indices.contains(index + 1) {
-            text = Self.chunks(of: stories[index + 1]).first
-        } else {
-            text = nil
+        var upcoming = Array(chunks.dropFirst(chunk + 1))
+        if stories.indices.contains(index + 1) { upcoming += Self.chunks(of: stories[index + 1]) }
+        for text in upcoming.prefix(2) {
+            Task { _ = await audio(for: text) }
         }
-        guard let text else { return }
-        let lang = Self.language(of: text)
-        Task { _ = await audio(for: text, lang: lang) }
     }
 
     private func fallBack(_ message: String) {
@@ -269,13 +282,22 @@ final class SpeechReader: NSObject, ObservableObject,
     private struct SpeakRequest: Encodable {
         let action = "speak"
         let text: String
-        let lang: String
-        let gender: String
     }
-    private struct SpeakResponse: Decodable { let ok: Bool; let audio: String?; let message: String? }
+    private struct SpeakResponse: Decodable { let ok: Bool; let url: String?; let message: String? }
 
     private static let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("speech", isDirectory: true)
+
+    /// The phone only keeps audio for a couple of days; the server keeps its own copy.
+    private static func pruneCache() {
+        let fm = FileManager.default
+        let cutoff = Date.now.addingTimeInterval(-2 * 86_400)
+        let files = (try? fm.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        for file in files {
+            let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if date < cutoff { try? fm.removeItem(at: file) }
+        }
+    }
 
     // MARK: - Voices
 

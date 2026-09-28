@@ -36,3 +36,10 @@ create policy "signed-in users read digests" on public.digests
 drop policy if exists "signed-in users read status" on public.run_status;
 create policy "signed-in users read status" on public.run_status
   for select to authenticated using (true);
+
+-- Read-aloud audio made by the summarize Edge Function (Gemini voice), one WAV per story section.
+-- Private: the function hands the app short-lived signed links. Old files are deleted by the
+-- daily workflow (server/scripts/cleanup-speech.ts).
+insert into storage.buckets (id, name, public)
+values ('speech', 'speech', false)
+on conflict (id) do nothing;

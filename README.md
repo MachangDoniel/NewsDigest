@@ -109,10 +109,11 @@ The app has this project's Supabase URL and publishable key built in ([`AppConfi
 - `GH_REPO`: `owner/name`, e.g. `MachangDoniel/NewsDigest`
 - `GH_REF` (optional): the branch to run, `main` by default
 
-**Read aloud** (the 🎧 button in a paper) uses Microsoft Azure's natural voices through the same function, and Apple's built-in voice when Azure isn't set up. The free tier (F0) covers about 500,000 characters a month. Create a Speech resource in the [Azure portal](https://portal.azure.com), then add these Edge Function secrets:
-- `AZURE_SPEECH_KEY`: the resource's key
-- `AZURE_SPEECH_REGION`: its region, e.g. `southeastasia`
-- `AZURE_VOICE_BN`, `AZURE_VOICE_EN` (optional): other voices; the defaults are `bn-BD-NabanitaNeural` / `bn-BD-PradeepNeural` and `en-US-JennyNeural` / `en-US-GuyNeural`, picked in Settings → Read aloud
+**Read aloud** (the 🎧 button in a paper) uses Gemini's voice through the same function, or Apple's built-in voice (Settings → Read aloud). Each story section is made once and kept in a private Storage bucket, so replaying it, on any device, is instant and free. To set it up:
+- Run the `speech` bucket part of [`supabase/schema.sql`](supabase/schema.sql).
+- Add the Edge Function secret `GEMINI_TTS_KEYS`: keys from a **separate** Google AI Studio project. Gemini's limits are per project, so reading aloud then never uses the summary quota.
+- Optional secrets: `GEMINI_TTS_VOICE` (default `Kore`; others include `Puck`, `Charon`, `Aoede`) and `GEMINI_TTS_MODEL` (default `gemini-3.8-flash-tts`, falling back to `gemini-3.8-flash-lite-tts`).
+- Audio is about 2.8 MB a minute, so the daily workflow deletes files older than 3 days. Change that with the `SPEECH_KEEP_DAYS` repository variable.
 
 ## Configuration
 

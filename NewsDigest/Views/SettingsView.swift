@@ -8,7 +8,7 @@ struct SettingsView: View {
 
     @AppStorage(AI.modelKey) private var model = "auto"
     @AppStorage(AI.languageKey) private var language = "auto"
-    @AppStorage(SpeechReader.voiceKey) private var voice = "natural-female"
+    @AppStorage(SpeechReader.voiceKey) private var voice = "gemini"
 
     var body: some View {
         NavigationStack {
@@ -73,7 +73,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Read aloud")
                 } footer: {
-                    Text("The natural voice (Microsoft Azure, Bangladeshi Bangla and English) needs you to be signed in and the Azure key in your Supabase project. If it isn't available, Apple's voice reads instead. Pieces already heard are saved on this phone, so hearing them again is free.")
+                    Text("The Gemini voice sounds natural in Bangla and English. It needs you to be signed in, and uses its own Gemini key on the server, separate from ✨ Summarize. Each section is made once and kept, so replaying it is instant. If it's unavailable or out of quota for the day, Apple's voice reads instead.")
                 }
 
                 Section("When a digest fails") {
