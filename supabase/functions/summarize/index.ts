@@ -18,7 +18,9 @@
 //   the private "speech" Storage bucket; later requests for the same text get the saved copy.
 //   Uses only GEMINI_TTS_KEYS (keys from a separate Google project, so reading aloud never uses
 //   the summary quota). GEMINI_TTS_VOICE (default "Kore") and GEMINI_TTS_MODEL are optional.
-//   → { ok: true, url, cached } (signed URL of a WAV file, valid 1 hour) | { ok: false, reason: "quota"|"error", message }
+//   → { ok: true, url, cached } (signed URL of a WAV file, valid 1 hour)
+//   | { ok: false, reason: "busy", retryAfter, message }  per-minute limit: try again after retryAfter seconds
+//   | { ok: false, reason: "quota"|"error", message }       daily limit reached, or another failure
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const CATEGORIES = ["Bangladesh Affairs", "International Affairs", "Economy", "Science & Tech", "Environment", "Sports", "Others"];
@@ -262,7 +264,10 @@ async function speak(body: any) {
   }
 
   let audio: Uint8Array | null = null;
-  let quota = false;
+  // A 429 is either the per-minute limit (busy: fine again shortly) or the daily one (quota).
+  let busyFor = 0;
+  let daily = false;
+  let lastError = "";
   outer: for (const model of models) {
     for (const key of pool) {
       const res = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
@@ -276,9 +281,14 @@ async function speak(body: any) {
           generation_config: { speech_config: [{ voice }] },
         }),
       }).catch(() => null);
-      if (!res) continue;
-      if (res.status === 429) { quota = true; continue; }  // this key's daily limit: try the next
-      if (!res.ok) continue;
+      if (!res) { lastError = "no response"; continue; }
+      if (res.status === 429) {
+        const detail = await res.text();
+        if (/per ?day/i.test(detail)) daily = true;
+        else busyFor = Math.max(busyFor, Number(detail.match(/"retryDelay":\s*"(\d+)/)?.[1] ?? 20));
+        continue;  // try the next key, then the next model
+      }
+      if (!res.ok) { lastError = `${model} said ${res.status}`; continue; }
       const data = await res.json();
       const parts = (data.steps ?? []).filter((s: any) => s.type === "model_output").flatMap((s: any) => s.content ?? []);
       const b64 = parts.filter((c: any) => c.type === "audio").at(-1)?.data;
@@ -286,7 +296,9 @@ async function speak(body: any) {
     }
   }
   if (!audio) {
-    return json({ ok: false, reason: quota ? "quota" : "error", message: quota ? "The Gemini voice is out of quota for today." : "The Gemini voice couldn't make this section." });
+    if (busyFor) return json({ ok: false, reason: "busy", retryAfter: Math.min(busyFor, 60), message: "The Gemini voice is busy for a moment." });
+    if (daily) return json({ ok: false, reason: "quota", message: "The Gemini voice is out of quota for today." });
+    return json({ ok: false, reason: "error", message: `The Gemini voice couldn't make this section (${lastError || "no audio"}).` });
   }
 
   const { error } = await storage.upload(path, audio, { contentType: "audio/wav", upsert: true });

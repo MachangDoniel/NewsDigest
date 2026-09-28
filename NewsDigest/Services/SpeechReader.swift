@@ -20,6 +20,8 @@ final class SpeechReader: NSObject, ObservableObject,
     @Published private(set) var stories: [PaperStory] = []
     @Published private(set) var index = 0
     @Published private(set) var isPlaying = false
+    /// True while Apple's voice reads: back/forward then move by sentence instead of 5 seconds.
+    @Published private(set) var bySentence = false
     /// Why reading can't go on, e.g. no Apple voice for the language (usually Bangla).
     @Published private(set) var problem: String?
     /// Shown when the natural voice isn't available and Apple's voice is used instead.
@@ -27,7 +29,7 @@ final class SpeechReader: NSObject, ObservableObject,
     @Published var rate: Float = UserDefaults.standard.object(forKey: "speechRate") as? Float ?? 1.0 {
         didSet {
             UserDefaults.standard.set(rate, forKey: "speechRate")
-            if let player { player.rate = rate } else if isPlaying { speakChunk() }
+            if let player { player.rate = rate } else if isPlaying { stepSentence(by: 0) }
         }
     }
 
@@ -43,9 +45,13 @@ final class SpeechReader: NSObject, ObservableObject,
     /// Only output we last started may advance the queue; stopped or stale ones are ignored.
     private var token = UUID()
     private var utterance: AVSpeechUtterance?
+    /// Apple's voice: where in the section the current utterance began, and the word being spoken
+    /// (UTF-16 offsets into the section), for moving by sentence.
+    private var appleStart = 0
+    private var appleSpoken = 0
     private var fetches: [String: Task<Data?, Never>] = [:]
-    /// Set after the natural voice fails, so the rest of this session doesn't wait on it.
-    private var naturalOff = false
+    /// After the Gemini voice fails, Apple's voice reads until this time, then Gemini is tried again.
+    private var naturalOffUntil: Date?
     private weak var store: DigestStore?
     private var title = ""
     private var commandsSet = false
@@ -56,7 +62,7 @@ final class SpeechReader: NSObject, ObservableObject,
     }
 
     private var voiceSetting: String { UserDefaults.standard.string(forKey: Self.voiceKey) ?? "gemini" }
-    private var useNatural: Bool { voiceSetting != "apple" && !naturalOff }
+    private var useNatural: Bool { voiceSetting != "apple" && (naturalOffUntil ?? .distantPast) <= .now }
 
     // MARK: - Controls
 
@@ -102,19 +108,57 @@ final class SpeechReader: NSObject, ObservableObject,
         if index + 1 < stories.count { play(story: index + 1) } else { stop() }
     }
 
-    /// Jumps back or forward within the section being read, staying inside it.
-    /// Apple's voice can't jump inside a section, so there it restarts the section (back) or
-    /// moves to the next one (forward).
+    /// Back/forward: 5 seconds within the section with the Gemini voice. Apple's voice can't jump
+    /// by time, so there it moves to the previous or next sentence.
     func seek(by seconds: TimeInterval) {
         guard isActive else { return }
         if let player {
             player.currentTime = min(max(0, player.currentTime + seconds), max(0, player.duration - 0.1))
             updateNowPlaying()
-        } else if seconds < 0 {
-            speakChunk()
         } else {
-            advance()
+            stepSentence(by: seconds < 0 ? -1 : 1)
         }
+    }
+
+    /// Apple's voice: restarts at the sentence `delta` sentences away from the one being spoken
+    /// (0 = this one). Before the first sentence it goes to the previous section's last sentence;
+    /// past the last one, to the next section.
+    private func stepSentence(by delta: Int) {
+        guard chunks.indices.contains(chunk) else { return }
+        let starts = Self.sentenceStarts(chunks[chunk])
+        let current = starts.lastIndex { $0 <= appleSpoken } ?? 0
+        let target = current + delta
+        if target < 0 {
+            guard chunk > 0 else { return speakChunk(from: 0) }
+            chunk -= 1
+            speakChunk(from: Self.sentenceStarts(chunks[chunk]).last ?? 0)
+        } else if target >= starts.count {
+            advance()
+        } else {
+            speakChunk(from: starts[target])
+        }
+    }
+
+    /// Where each sentence starts (UTF-16 offsets): after "।", or after ".", "?", "!" followed by a
+    /// space (so "3.5" stays whole), and after line breaks.
+    private static func sentenceStarts(_ text: String) -> [Int] {
+        let ns = text as NSString
+        let isSpace = { (c: unichar) in c == 0x20 || c == 0x0A || c == 0x09 || c == 0xA0 }
+        var starts = [0]
+        var i = 0
+        while i < ns.length {
+            let c = ns.character(at: i)
+            let next = i + 1 < ns.length ? ns.character(at: i + 1) : 0x20
+            if c == 0x0964 || c == 0x0A || ([0x2E, 0x3F, 0x21].contains(c) && isSpace(next)) {
+                var j = i + 1
+                while j < ns.length, isSpace(ns.character(at: j)) { j += 1 }
+                if j < ns.length, j > starts.last! { starts.append(j) }
+                i = j
+            } else {
+                i += 1
+            }
+        }
+        return starts
     }
 
     func stop() {
@@ -178,14 +222,15 @@ final class SpeechReader: NSObject, ObservableObject,
         player = nil
     }
 
-    private func speakChunk() {
+    /// Reads the current section; `offset` (Apple's voice only) starts partway, at a sentence.
+    private func speakChunk(from offset: Int = 0) {
         stopOutput()
         guard chunks.indices.contains(chunk) else { return next() }
         let text = chunks[chunk]
         let lang = Self.language(of: stories[index].headline + " " + text)
         isPlaying = true
         updateNowPlaying()
-        guard useNatural else { return speakWithApple(text, lang: lang) }
+        guard useNatural else { return speakWithApple(text, lang: lang, from: offset) }
 
         let token = token
         Task {
@@ -200,18 +245,23 @@ final class SpeechReader: NSObject, ObservableObject,
             player.rate = rate
             player.prepareToPlay()
             self.player = player
+            bySentence = false
             if isPlaying { player.play() }  // paused while loading: resume() starts it
         }
     }
 
-    private func speakWithApple(_ text: String, lang: String) {
+    private func speakWithApple(_ text: String, lang: String, from offset: Int = 0) {
+        bySentence = true
         guard let voice = Self.appleVoice(for: lang) else {
             problem = "This iPhone has no voice for this language. Add one in Settings → Accessibility → Spoken Content → Voices."
             pause()
             return
         }
         problem = nil
-        let u = AVSpeechUtterance(string: text)
+        let start = min(max(0, offset), (text as NSString).length)
+        appleStart = start
+        appleSpoken = start
+        let u = AVSpeechUtterance(string: (text as NSString).substring(from: start))
         u.voice = voice
         u.rate = AVSpeechUtteranceDefaultSpeechRate * rate
         u.postUtteranceDelay = chunk == 0 ? 0.5 : 0.25  // a beat after the headline
@@ -223,6 +273,11 @@ final class SpeechReader: NSObject, ObservableObject,
     private func advance() {
         chunk += 1
         speakChunk()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString range: NSRange, utterance: AVSpeechUtterance) {
+        guard utterance === self.utterance else { return }
+        appleSpoken = appleStart + range.location
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish finished: AVSpeechUtterance) {
@@ -247,23 +302,40 @@ final class SpeechReader: NSObject, ObservableObject,
         if let running = fetches[key] { return await running.value }
 
         guard let store, store.authState == .signedIn else {
-            fallBack("Sign in on the Today tab for the Gemini voice. Using Apple's voice for now.")
+            fallBack("Sign in on the Today tab for the Gemini voice. Using Apple's voice for now.", for: 60)
             return nil
         }
         let task = Task<Data?, Never> { [weak self] in
-            do {
-                let res: SpeakResponse = try await store.invokeFunction("summarize", body: SpeakRequest(text: text))
-                if res.ok, let link = res.url.flatMap(URL.init(string:)) {
-                    let (data, response) = try await URLSession.shared.data(from: link)
-                    if (response as? HTTPURLResponse)?.statusCode == 200 {
+            // Gemini's free tier allows only a few voice requests a minute. When it's busy,
+            // wait as long as it asks and try again rather than giving up on the voice.
+            for attempt in 0..<3 {
+                do {
+                    let res: SpeakResponse = try await store.invokeFunction("summarize", body: SpeakRequest(text: text))
+                    if res.ok, let link = res.url.flatMap(URL.init(string:)) {
+                        let (data, response) = try await URLSession.shared.data(from: link)
+                        guard (response as? HTTPURLResponse)?.statusCode == 200 else { break }
                         try? FileManager.default.createDirectory(at: Self.cacheDir, withIntermediateDirectories: true)
                         try? data.write(to: file)
+                        self?.note = nil
                         return data
                     }
+                    switch res.reason {
+                    case "busy" where attempt < 2:
+                        let wait = min(max(res.retryAfter ?? 10, 3), 30)
+                        self?.note = "The Gemini voice is busy. Continuing in \(Int(wait)) seconds…"
+                        try await Task.sleep(for: .seconds(wait))
+                        continue
+                    case "busy":
+                        self?.fallBack("The Gemini voice is busy. Using Apple's voice for a minute.", for: 60)
+                    case "quota":
+                        self?.fallBack("The Gemini voice is out of quota for today. Using Apple's voice.", for: 30 * 60)
+                    default:
+                        self?.fallBack((res.message ?? "The Gemini voice isn't available.") + " Using Apple's voice for a minute.", for: 60)
+                    }
+                } catch {
+                    if !Task.isCancelled { self?.fallBack("The Gemini voice couldn't be reached. Using Apple's voice for a minute.", for: 60) }
                 }
-                self?.fallBack((res.message ?? "The Gemini voice isn't available.") + " Using Apple's voice for now.")
-            } catch {
-                if !Task.isCancelled { self?.fallBack("The Gemini voice couldn't be reached. Using Apple's voice for now.") }
+                break
             }
             return nil
         }
@@ -273,18 +345,21 @@ final class SpeechReader: NSObject, ObservableObject,
         return data
     }
 
-    /// Starts fetching the next two sections while this one plays, so there's no gap between them.
+    /// Fetches the next two sections while this one plays, one at a time so the requests
+    /// don't pile up against Gemini's per-minute limit.
     private func prefetchNext() {
         guard useNatural else { return }
         var upcoming = Array(chunks.dropFirst(chunk + 1))
         if stories.indices.contains(index + 1) { upcoming += Self.chunks(of: stories[index + 1]) }
-        for text in upcoming.prefix(2) {
-            Task { _ = await audio(for: text) }
+        let next = Array(upcoming.prefix(2))
+        Task {
+            for text in next where useNatural { _ = await audio(for: text) }
         }
     }
 
-    private func fallBack(_ message: String) {
-        naturalOff = true
+    /// Reads with Apple's voice for a while, then tries Gemini again.
+    private func fallBack(_ message: String, for seconds: TimeInterval) {
+        naturalOffUntil = .now.addingTimeInterval(seconds)
         note = message
     }
 
@@ -292,7 +367,13 @@ final class SpeechReader: NSObject, ObservableObject,
         let action = "speak"
         let text: String
     }
-    private struct SpeakResponse: Decodable { let ok: Bool; let url: String?; let message: String? }
+    private struct SpeakResponse: Decodable {
+        let ok: Bool
+        let url: String?
+        let reason: String?
+        let retryAfter: Double?
+        let message: String?
+    }
 
     private static let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("speech", isDirectory: true)
