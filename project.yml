@@ -22,6 +22,8 @@ targets:
         CFBundleDisplayName: NewsDigest
         UILaunchScreen: {}
         ITSAppUsesNonExemptEncryption: false
+        UIBackgroundModes:
+          - audio   # keep reading aloud with the screen locked
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UISupportedInterfaceOrientations~ipad:

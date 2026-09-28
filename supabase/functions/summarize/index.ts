@@ -8,6 +8,17 @@
 //   → { ok: true, sections, mcqs, model, source } | { ok: false, reason: "quota"|"error", message }
 // POST { action: "chat", context, messages: [{ role: "user"|"model", text }] }
 //   → { ok: true, text, model } | { ok: false, reason, message }
+// POST { action: "run_digest", paper?: "dailystar"|"prothomalo" }
+//   Starts the "Daily digest" GitHub workflow now instead of waiting for the next hourly run.
+//   Needs GH_DISPATCH_TOKEN (fine-grained token, Actions: read and write on the repo) and
+//   GH_REPO ("owner/name"); GH_REF defaults to "main".
+//   → { ok: true, message } | { ok: false, reason: "error", message }
+// POST { action: "speak", text }
+//   Gemini read-aloud voice for one section of a story. Each section is made once and saved in
+//   the private "speech" Storage bucket; later requests for the same text get the saved copy.
+//   Uses only GEMINI_TTS_KEYS (keys from a separate Google project, so reading aloud never uses
+//   the summary quota). GEMINI_TTS_VOICE (default "Kore") and GEMINI_TTS_MODEL are optional.
+//   → { ok: true, url, cached } (signed URL of a WAV file, valid 1 hour) | { ok: false, reason: "quota"|"error", message }
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const CATEGORIES = ["Bangladesh Affairs", "International Affairs", "Economy", "Science & Tech", "Environment", "Sports", "Others"];
@@ -198,6 +209,92 @@ async function chat(body: any) {
   return json({ ok: false, reason: "quota", message: "All AI keys are busy or out of quota right now." });
 }
 
+async function runDigest(body: any) {
+  const token = Deno.env.get("GH_DISPATCH_TOKEN");
+  const repo = Deno.env.get("GH_REPO");
+  if (!token || !repo) return json({ ok: false, reason: "error", message: "Manual runs aren't set up on the server (GH_DISPATCH_TOKEN / GH_REPO)." });
+  const api = `https://api.github.com/repos/${repo}/actions/workflows/daily-digest.yml`;
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+
+  // A run already queued or in progress will pick up whatever isn't done; don't stack another.
+  for (const status of ["in_progress", "queued"]) {
+    const res = await fetch(`${api}/runs?status=${status}&per_page=1`, { headers }).catch(() => null);
+    if (res?.ok && (await res.json()).total_count > 0) {
+      return json({ ok: true, message: "A digest run is already going. It usually takes 5–10 minutes." });
+    }
+  }
+
+  const paper = ["dailystar", "prothomalo"].includes(body.paper) ? body.paper : "";
+  const res = await fetch(`${api}/dispatches`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ ref: Deno.env.get("GH_REF") || "main", inputs: { paper, force: false } }),
+  }).catch(() => null);
+  if (!res?.ok) {
+    const detail = res ? `GitHub said ${res.status}` : "couldn't reach GitHub";
+    return json({ ok: false, reason: "error", message: `Couldn't start the digest (${detail}).` });
+  }
+  return json({ ok: true, message: "Digest started. It usually takes 5–10 minutes." });
+}
+
+const TTS_MODELS = ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"];
+
+async function speak(body: any) {
+  const pool = keys("GEMINI_TTS_KEYS");
+  if (!pool.length) return json({ ok: false, reason: "error", message: "The Gemini voice isn't set up on the server (GEMINI_TTS_KEYS)." });
+  const text = String(body.text ?? "").trim().slice(0, 1500);
+  if (!text) return json({ ok: false, reason: "error", message: "Nothing to read" }, 400);
+  const voice = Deno.env.get("GEMINI_TTS_VOICE") || "Kore";
+  const preferred = Deno.env.get("GEMINI_TTS_MODEL");
+  const models = preferred ? [preferred, ...TTS_MODELS.filter((m) => m !== preferred)] : TTS_MODELS;
+
+  // Saved per voice and text, so any section already made is sent straight back.
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))))
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+  const path = `${voice}/${hash}.wav`;
+  const storage = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!).storage.from("speech");
+  const signed = async () => (await storage.createSignedUrl(path, 3600)).data?.signedUrl;
+
+  const { data: found } = await storage.list(voice, { search: `${hash}.wav`, limit: 1 });
+  if (found?.some((f) => f.name === `${hash}.wav`)) {
+    const url = await signed();
+    if (url) return json({ ok: true, url, cached: true });
+  }
+
+  let audio: Uint8Array | null = null;
+  let quota = false;
+  outer: for (const model of models) {
+    for (const key of pool) {
+      const res = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+        method: "POST",
+        signal: AbortSignal.timeout(90_000),
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          model,
+          input: [{ type: "user_input", content: [{ type: "text", text }] }],
+          response_format: { type: "audio", mime_type: "audio/wav", sample_rate: 24000 },
+          generation_config: { speech_config: [{ voice }] },
+        }),
+      }).catch(() => null);
+      if (!res) continue;
+      if (res.status === 429) { quota = true; continue; }  // this key's daily limit: try the next
+      if (!res.ok) continue;
+      const data = await res.json();
+      const parts = (data.steps ?? []).filter((s: any) => s.type === "model_output").flatMap((s: any) => s.content ?? []);
+      const b64 = parts.filter((c: any) => c.type === "audio").at(-1)?.data;
+      if (b64) { audio = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); break outer; }
+    }
+  }
+  if (!audio) {
+    return json({ ok: false, reason: quota ? "quota" : "error", message: quota ? "The Gemini voice is out of quota for today." : "The Gemini voice couldn't make this section." });
+  }
+
+  const { error } = await storage.upload(path, audio, { contentType: "audio/wav", upsert: true });
+  if (error) return json({ ok: false, reason: "error", message: `Couldn't save the audio: ${error.message}` });
+  const url = await signed();
+  return url ? json({ ok: true, url, cached: false }) : json({ ok: false, reason: "error", message: "Couldn't share the saved audio." });
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ ok: false, reason: "error", message: "POST only" }, 405);
 
@@ -209,5 +306,7 @@ Deno.serve(async (req) => {
 
   const body = await req.json().catch(() => ({}));
   if (body.action === "chat") return chat(body);
+  if (body.action === "run_digest") return runDigest(body);
+  if (body.action === "speak") return speak(body);
   return summarize(body);
 });

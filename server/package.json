@@ -5,6 +5,7 @@
   "scripts": {
     "digest": "tsx src/run.ts",
     "check-done": "tsx scripts/check-done.ts",
+    "cleanup-speech": "tsx scripts/cleanup-speech.ts",
     "save-session":"tsx scripts/save-session.ts",
     "typecheck": "tsc --noEmit"
   },

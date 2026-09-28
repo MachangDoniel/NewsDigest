@@ -13,11 +13,16 @@ struct DayDigestView: View {
     @State private var category: String?
     @State private var highOnly = false
     @State private var reader: SavedItem?
+    @State private var run: RunNow = .idle
+
+    enum RunNow: Equatable { case idle, starting, started(String), failed(String) }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
                 ForEach(store.cachedStatus(date).filter { $0.state != "ok" }, id: \.self) { StatusBanner(status: $0) }
+
+                if canRunNow { runNowCard }
 
                 if mcqCount > 0 {
                     Button { router.practice(date) } label: { practiceBanner }
@@ -37,6 +42,7 @@ struct DayDigestView: View {
         .solidTopEdge()
         .refreshable { await load() }
         .task(id: date) { await load() }
+        .task(id: run) { await followRun() }
         .fullScreenCover(item: $reader) { item in
             ReaderView(paper: item.paper, date: DigestDate.date(item.date), pageId: item.item.pageId)
         }
@@ -82,7 +88,7 @@ struct DayDigestView: View {
             ContentUnavailableView(
                 "No digest for \(DigestDate.pretty(date))",
                 systemImage: "newspaper",
-                description: Text("The server builds it each morning around 6 AM. You can also use ✨ Summarize in the Papers tab.")
+                description: Text("The server tries every hour from 6 AM until the papers are out. You can also use ✨ Summarize in the Papers tab.")
             )
         } else if items.isEmpty {
             ContentUnavailableView("Nothing matches these filters", systemImage: "line.3.horizontal.decrease.circle")
@@ -119,6 +125,72 @@ struct DayDigestView: View {
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    // MARK: - Run now
+
+    /// Today, with at least one paper still missing: offer to build it now instead of waiting for the hourly run.
+    private var canRunNow: Bool {
+        guard date == DigestDate.string(.now), !(loading && digests.isEmpty) else { return false }
+        return Set(digests.map(\.paper)).count < Paper.allCases.count
+    }
+
+    private var runNowCard: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Papers out already?").font(.subheadline.weight(.semibold))
+                Group {
+                    switch run {
+                    case .idle, .starting:
+                        Text("The server checks every hour. Build today's digest now instead of waiting.")
+                    case .started(let message):
+                        Text(message + " This page refreshes on its own.")
+                    case .failed(let message):
+                        Text(message).foregroundStyle(.orange)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                if case .started = run {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button { Task { await startRun() } } label: {
+                        Text(run == .starting ? "Starting…" : "Run digest now")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(run == .starting)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func startRun() async {
+        run = .starting
+        do {
+            let res = try await store.runDigestNow()
+            run = res.ok ? .started(res.message) : .failed(res.message)
+        } catch {
+            run = .failed(error.localizedDescription)
+        }
+    }
+
+    /// After starting a run, reloads every minute for up to 20 minutes until both papers are in.
+    private func followRun() async {
+        guard case .started = run else { return }
+        for _ in 0..<20 {
+            try? await Task.sleep(for: .seconds(60))
+            if Task.isCancelled { return }
+            await load()
+            if !canRunNow { break }
+        }
+        run = .idle
     }
 
     // MARK: - Data

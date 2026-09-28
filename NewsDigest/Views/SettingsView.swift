@@ -8,6 +8,7 @@ struct SettingsView: View {
 
     @AppStorage(AI.modelKey) private var model = "auto"
     @AppStorage(AI.languageKey) private var language = "auto"
+    @AppStorage(SpeechReader.voiceKey) private var voice = "gemini"
 
     var body: some View {
         NavigationStack {
@@ -63,6 +64,16 @@ struct SettingsView: View {
                     Text("✨ Summarize")
                 } footer: {
                     Text("Uses the Gemini and Groq keys stored in your Supabase project, so no key is needed on this phone. If every key is busy or out of quota, you get the paper's own text for the page instead. If the model you pick is busy, the next one is tried automatically. Groq models read the article text only; pages without text use Gemini.")
+                }
+
+                Section {
+                    Picker("Voice", selection: $voice) {
+                        ForEach(SpeechReader.voices, id: \.id) { Text($0.label).tag($0.id) }
+                    }
+                } header: {
+                    Text("Read aloud")
+                } footer: {
+                    Text("The Gemini voice sounds natural in Bangla and English. It needs you to be signed in, and uses its own Gemini key on the server, separate from ✨ Summarize. Each section is made once and kept, so replaying it is instant. If it's unavailable or out of quota for the day, Apple's voice reads instead.")
                 }
 
                 Section("When a digest fails") {

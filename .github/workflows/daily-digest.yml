@@ -37,6 +37,14 @@ jobs:
 
       - run: npm ci
 
+      - name: Delete old read-aloud audio
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SPEECH_KEEP_DAYS: ${{ vars.SPEECH_KEEP_DAYS }}
+        run: npm run cleanup-speech
+
       - name: Check if today is already done
         id: check
         if: ${{ inputs.force != true }}
