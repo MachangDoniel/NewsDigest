@@ -13,12 +13,43 @@ export function dhakaDate(date = new Date()) {
   return { y: get("year"), m: get("month"), d: get("day"), iso: `${get("year")}-${get("month")}-${get("day")}` };
 }
 
+export type Day = ReturnType<typeof dhakaDate>;
+
+/** A given YYYY-MM-DD edition date, in the same shape as dhakaDate(). */
+export function parseDay(iso: string): Day {
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw new Error(`--date must look like 2026-10-07, got "${iso}"`);
+  const [, y, m, d] = match;
+  return { y, m, d, iso };
+}
+
+let personWatching = false;
+/** The browser window is visible and someone is at the Mac to answer a check themselves. */
+export function setPersonWatching(on: boolean) {
+  personWatching = on;
+}
+
 /** Throws if the page is showing a CAPTCHA / bot check. We never try to solve these. */
 export async function assertNoChallenge(page: Page) {
-  const challenge = await page
-    .locator('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"], #cf-challenge-running')
-    .count();
-  if (challenge > 0) throw new ChallengeError(`CAPTCHA / bot check shown at ${page.url()}`);
+  // Cloudflare's "Just a moment..." page. Its check sits in a closed shadow root, so the selector
+  // below can't see it. It sometimes clears by itself; give it a moment before giving up.
+  const interstitial = async () => /^just a moment/i.test(await page.title().catch(() => ""));
+  const shown = async () =>
+    (await interstitial()) ||
+    (await page
+      .locator('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"], #cf-challenge-running')
+      .count()
+      .catch(() => 0)) > 0;
+  for (let i = 0; i < 10 && (await interstitial()); i++) await page.waitForTimeout(2000);
+  if (personWatching && (await shown())) {
+    console.log("  → A check is showing in the browser window. Answer it there; waiting up to 5 minutes…");
+    for (let i = 0; i < 150 && (await shown()); i++) await page.waitForTimeout(2000);
+    await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+  }
+  if (await shown()) {
+    const { origin, pathname } = new URL(page.url());
+    throw new ChallengeError(`CAPTCHA / bot check shown at ${origin}${pathname}`);
+  }
 }
 
 /**

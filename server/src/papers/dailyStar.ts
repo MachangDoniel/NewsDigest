@@ -1,8 +1,9 @@
 import type { Browser, BrowserContext, Page } from "playwright";
 import { LoginError, NotPublishedError, type PageImage } from "../types.js";
 import { attachStories } from "./stories.js";
-import { assertNoChallenge, dhakaDate, downloadPages, type TagList } from "./common.js";
+import { assertNoChallenge, dhakaDate, downloadPages, type Day, type TagList } from "./common.js";
 
+const BASE = "https://epaper.thedailystar.net";
 const LOGIN_URL = "https://profile.thedailystar.net/login?redirect_to=https://epaper.thedailystar.net/Login/LandingPage";
 /**
  * After login the reader opens at /DhakaEdition?... with a thumbnail strip of every page:
@@ -49,12 +50,16 @@ async function logLayout(page: Page) {
   console.log(JSON.stringify(info, null, 1));
 }
 
-export async function captureDailyStar(browser: Browser): Promise<PageImage[]> {
+export async function captureDailyStar(browser: Browser, day: Day = dhakaDate()): Promise<PageImage[]> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 1600 } });
   try {
     const page = await signIn(context);
-    const { y, m, d } = dhakaDate();
+    const { y, m, d } = day;
 
+    // The reader opens on the latest edition; any other day has its own address.
+    if (day.iso !== dhakaDate().iso) {
+      await page.goto(`${BASE}/DhakaEdition?eid=1&edate=${d}/${m}/${y}&device=desktop&view=2`, { waitUntil: "domcontentloaded" });
+    }
     await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
     await assertNoChallenge(page);
     if (!(await page.waitForSelector(THUMB, { timeout: 30_000 }).catch(() => null))) {
@@ -86,7 +91,7 @@ export async function captureDailyStar(browser: Browser): Promise<PageImage[]> {
       throw new LoginError("Daily Star page images could not be downloaded (subscription/login?)");
     }
     // Real article text; image reading stays as the fallback for pages without it.
-    await attachStories(context, "https://epaper.thedailystar.net", pages, page.url()).catch((e) => console.warn(`  article text unavailable: ${(e as Error).message}`));
+    await attachStories(context, BASE, pages, page.url()).catch((e) => console.warn(`  article text unavailable: ${(e as Error).message}`));
     return pages;
   } finally {
     await context.close();

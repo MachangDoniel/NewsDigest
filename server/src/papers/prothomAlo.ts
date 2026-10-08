@@ -1,7 +1,7 @@
 import type { Browser, BrowserContext } from "playwright";
 import { LoginError, NotPublishedError, type PageImage } from "../types.js";
 import { attachStories } from "./stories.js";
-import { assertNoChallenge, dhakaDate, downloadPages, readPageImageTags } from "./common.js";
+import { assertNoChallenge, dhakaDate, downloadPages, readPageImageTags, type Day } from "./common.js";
 import { loadSession } from "../session.js";
 
 const BASE = "https://epaper.prothomalo.com";
@@ -45,10 +45,10 @@ async function openContext(browser: Browser): Promise<BrowserContext> {
  * The reader puts every page in the DOM as <img class="img_jpg"> with attributes:
  *   pageno, pgname, sequence, page_id, highres, xhighres, paywallpage
  */
-export async function captureProthomAlo(browser: Browser): Promise<PageImage[]> {
+export async function captureProthomAlo(browser: Browser, day: Day = dhakaDate()): Promise<PageImage[]> {
   const context = await openContext(browser);
   try {
-    const { y, m, d } = dhakaDate();
+    const { y, m, d } = day;
     const page = await context.newPage();
     await page.goto(`${BASE}/Home/DIndex?eid=1&edate=${d}/${m}/${y}`, { waitUntil: "domcontentloaded" });
     await assertNoChallenge(page);
