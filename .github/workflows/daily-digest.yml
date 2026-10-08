@@ -10,6 +10,9 @@ on:
       paper:
         description: "Only this paper (dailystar / prothomalo). Empty = both."
         required: false
+      date:
+        description: "A past edition to fill in, like 2026-10-07. Empty = today."
+        required: false
       force:
         description: "Re-run even if today's digest exists"
         type: boolean
@@ -51,7 +54,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npm run check-done -- ${{ inputs.paper && format('--paper {0}', inputs.paper) || '' }}
+        run: npm run check-done -- ${{ inputs.paper && format('--paper {0}', inputs.paper) || '' }} ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
 
       - if: steps.check.outputs.done != 'true'
         run: npx playwright install --with-deps chromium
@@ -76,5 +79,6 @@ jobs:
         run: |
           ARGS=""
           if [ -n "${{ inputs.paper }}" ]; then ARGS="$ARGS --paper ${{ inputs.paper }}"; fi
+          if [ -n "${{ inputs.date }}" ]; then ARGS="$ARGS --date ${{ inputs.date }}"; fi
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
           npm run digest -- $ARGS

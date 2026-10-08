@@ -154,6 +154,15 @@ Only one paper, and redo it even if it's already done:
 cd ~/Projects/NewsDigest/server && npm run digest -- --paper prothomalo --force
 ```
 
+Fill in a day that was missed (a past edition):
+
+```bash
+cd ~/Projects/NewsDigest/server && npm run digest -- --paper dailystar --date 2026-10-07
+```
+
+If the paper shows an "are you a robot?" check, a browser window opens by itself. Answer the check
+in that window (you have 5 minutes) and the digest carries on.
+
 Check whether today's digests exist:
 
 ```bash

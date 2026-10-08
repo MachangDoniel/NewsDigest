@@ -3,7 +3,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { chromium, type Browser } from "playwright";
 import { captureDailyStar } from "./papers/dailyStar.js";
 import { captureProthomAlo } from "./papers/prothomAlo.js";
-import { dhakaDate } from "./papers/common.js";
+import { dhakaDate, parseDay, setPersonWatching, type Day } from "./papers/common.js";
 import { summarizePage, summarizeStories } from "./gemini.js";
 import { merge } from "./merge.js";
 import { pagePrompt, storiesPrompt, type DigestLang } from "./prompt.js";
@@ -22,7 +22,7 @@ import {
   type PaperId,
 } from "./types.js";
 
-// Usage: npm run digest -- [--paper dailystar|prothomalo] [--dry] [--force] [--max-pages N]
+// Usage: npm run digest -- [--paper dailystar|prothomalo] [--date YYYY-MM-DD] [--dry] [--force] [--max-pages N]
 const args = process.argv.slice(2);
 const flag = (name: string) => {
   const i = args.indexOf(`--${name}`);
@@ -32,9 +32,11 @@ const DRY = args.includes("--dry");
 const FORCE = args.includes("--force");
 const MAX_PAGES = Number(flag("max-pages") ?? Infinity);
 const ONLY = flag("paper") as PaperId | undefined;
+// A past edition to fill in; default is today in Dhaka.
+const DATE = flag("date");
 
 // lang: each paper is summarized in its own language unless DIGEST_LANG overrides it.
-const PAPERS: { id: PaperId; name: string; lang: DigestLang; capture: (b: Browser) => Promise<PageImage[]> }[] = [
+const PAPERS: { id: PaperId; name: string; lang: DigestLang; capture: (b: Browser, day: Day) => Promise<PageImage[]> }[] = [
   { id: "dailystar", name: "The Daily Star", lang: "en", capture: captureDailyStar },
   { id: "prothomalo", name: "Prothom Alo", lang: "bn", capture: captureProthomAlo },
 ];
@@ -108,14 +110,15 @@ function stateFor(err: unknown): RunState {
   return "error";
 }
 
-async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], date: string, lang: DigestLang) {
+async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], day: Day, lang: DigestLang) {
+  const date = day.iso;
   console.log(`\n== ${paper.name} (${date})`);
   // The workflow runs a few times each morning; later runs only retry papers that aren't done.
   if (!DRY && !FORCE && (await hasDigest(date, paper.id))) {
     console.log("  already done, skipping");
     return;
   }
-  const pages = (await paper.capture(browser)).slice(0, MAX_PAGES);
+  const pages = (await paper.capture(browser, day)).slice(0, MAX_PAGES);
   console.log(`  captured ${pages.length} pages`);
 
   const delay = Number(process.env.GEMINI_DELAY_SECONDS || 7) * 1000;
@@ -156,14 +159,26 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], date: 
 }
 
 async function main() {
-  const date = dhakaDate().iso;
+  const day = DATE ? parseDay(DATE) : dhakaDate();
+  const date = day.iso;
   const override = process.env.DIGEST_LANG as DigestLang | "auto" | undefined;
-  const browser = await chromium.launch();
+  let browser = await chromium.launch();
   let failures = 0;
   try {
     for (const paper of PAPERS.filter((p) => !ONLY || p.id === ONLY)) {
+      const lang = override && override !== "auto" ? override : paper.lang;
       try {
-        await runPaper(browser, paper, date, override && override !== "auto" ? override : paper.lang);
+        try {
+          await runPaper(browser, paper, day, lang);
+        } catch (e) {
+          // On your own Mac, show the browser so you can answer the check yourself. Never on GitHub.
+          if (!(e instanceof ChallengeError) || process.env.CI) throw e;
+          console.log("  bot check shown; opening a browser window so you can answer it");
+          await browser.close();
+          browser = await chromium.launch({ headless: false });
+          setPersonWatching(true);
+          await runPaper(browser, paper, day, lang);
+        }
       } catch (e) {
         const state = stateFor(e);
         const message = (e as Error).message;
