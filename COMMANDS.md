@@ -82,6 +82,7 @@ No redeploy is needed after changing a secret.
 | `GEMINI_TTS_VOICE` | Optional. Voice name, default `Kore` (others: `Puck`, `Charon`, `Aoede`) |
 | `GH_DISPATCH_TOKEN` | "Run digest now" button. GitHub fine-grained token, **Actions: Read and write** on this repo |
 | `GH_REPO` | "Run digest now" button. Set to `MachangDoniel/NewsDigest` |
+| `WEB_LOG_KEY` | Lets the web app report its visitors to the Admin screen. The same value must be set as `WEB_LOG_KEY` in the web app's AI Studio secrets (it's saved in `server/.env` on this Mac) |
 
 Example: set the Gemini voice to Puck:
 

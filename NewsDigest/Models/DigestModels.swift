@@ -202,11 +202,12 @@ struct AdminOverview: Codable {
     }
 
     struct Usage: Codable {
-        struct Hour: Codable, Identifiable { let at: String; let app: Int; let server: Int; var id: String { at } }
+        struct Hour: Codable, Identifiable { let at: String; let app: Int; let server: Int; let web: Int; var id: String { at } }
         struct Day: Codable, Identifiable {
             let date: String
             let app: Int
             let server: Int
+            let web: Int
             let failed: Int
             var id: String { date }
         }
@@ -217,7 +218,8 @@ struct AdminOverview: Codable {
             let device: String?
             let ip: String?
             let userAgent: String?
-            var id: String { email }
+            /// "web" rows are website visitors, one per address.
+            var id: String { email + (ip ?? "") }
         }
         struct ByAction: Codable, Identifiable {
             let action: String

@@ -139,7 +139,7 @@ struct AdminView: View {
                      detail: "\(o.storage.audioFiles ?? 0) files · of \(megabytes(o.storage.audioLimitBytes))",
                      used: fraction(o.storage.audioBytes, o.storage.audioLimitBytes), tint: .orange)
                 card("Server & traffic", value: "\(requests)", unit: "requests handled today",
-                     detail: "\(o.usage.usersToday) user\(o.usage.usersToday == 1 ? "" : "s") · \(o.usage.failedToday) failed")
+                     detail: "\(o.usage.usersToday) client\(o.usage.usersToday == 1 ? "" : "s") · \(o.usage.failedToday) failed")
                 card("Response time", value: o.usage.avgMsToday.map(duration) ?? "–", unit: "",
                      detail: "Average today · database ping \(o.database.pingMs) ms")
             }
@@ -405,25 +405,27 @@ struct AdminView: View {
     }
 
     @ViewBuilder private func trafficTab(_ usage: AdminOverview.Usage) -> some View {
-        let peak = usage.hourly.max { $0.app + $0.server < $1.app + $1.server }
-        let total = usage.hourly.reduce(0) { $0 + $1.app + $1.server }
+        let peak = usage.hourly.max { $0.app + $0.server + $0.web < $1.app + $1.server + $1.web }
+        let total = usage.hourly.reduce(0) { $0 + $1.app + $1.server + $1.web }
         let ai = Self.aiActions.reduce(0) { $0 + (usage.today[$1] ?? 0) }
         VStack(alignment: .leading, spacing: 4) {
             Text("Last 24 hours").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             Chart(usage.hourly) { hour in
                 BarMark(x: .value("Hour", date(hour.at) ?? .now, unit: .hour), y: .value("Requests", hour.app))
                     .foregroundStyle(by: .value("From", "App"))
+                BarMark(x: .value("Hour", date(hour.at) ?? .now, unit: .hour), y: .value("Requests", hour.web))
+                    .foregroundStyle(by: .value("From", "Web"))
                 BarMark(x: .value("Hour", date(hour.at) ?? .now, unit: .hour), y: .value("Requests", hour.server))
                     .foregroundStyle(by: .value("From", "Server digest"))
             }
-            .chartForegroundStyleScale(["App": Color.accentColor, "Server digest": Color.green])
+            .chartForegroundStyleScale(["App": Color.accentColor, "Web": Color.orange, "Server digest": Color.green])
             .chartXAxis { AxisMarks(values: .stride(by: .hour, count: 6)) { AxisGridLine(); AxisValueLabel(format: .dateTime.hour()) } }
             .environment(\.timeZone, .dhaka)
             .frame(height: 160)
         }
         .padding(.vertical, 6)
         HStack(spacing: 10) {
-            tile("Peak hour", peak.flatMap { p in p.app + p.server > 0 ? date(p.at).map { "\($0.formatted(.dateTime.hour())) (\(p.app + p.server))" } : nil } ?? "–")
+            tile("Peak hour", peak.flatMap { p in p.app + p.server + p.web > 0 ? date(p.at).map { "\($0.formatted(.dateTime.hour())) (\(p.app + p.server + p.web))" } : nil } ?? "–")
             tile("Last 24 h", "\(total)")
             tile("AI today", "\(ai)")
         }
@@ -432,6 +434,8 @@ struct AdminView: View {
             Chart(usage.daily) { day in
                 BarMark(x: .value("Day", DigestDate.date(day.date), unit: .day), y: .value("Requests", day.app))
                     .foregroundStyle(by: .value("From", "App"))
+                BarMark(x: .value("Day", DigestDate.date(day.date), unit: .day), y: .value("Requests", day.web))
+                    .foregroundStyle(by: .value("From", "Web"))
                 BarMark(x: .value("Day", DigestDate.date(day.date), unit: .day), y: .value("Requests", day.server))
                     .foregroundStyle(by: .value("From", "Server digest"))
                 if day.failed > 0 {
@@ -439,7 +443,7 @@ struct AdminView: View {
                         .foregroundStyle(by: .value("From", "Failed"))
                 }
             }
-            .chartForegroundStyleScale(["App": Color.accentColor, "Server digest": Color.green, "Failed": Color.red])
+            .chartForegroundStyleScale(["App": Color.accentColor, "Web": Color.orange, "Server digest": Color.green, "Failed": Color.red])
             .environment(\.timeZone, .dhaka)
             .frame(height: 140)
         }
@@ -451,8 +455,8 @@ struct AdminView: View {
             Text("Nobody yet.").foregroundStyle(.secondary)
         } else {
             Chart(usage.byUser) { user in
-                BarMark(x: .value("Requests", user.count), y: .value("User", name(user.email)))
-                    .foregroundStyle(user.email == "server" ? Color.green : Color.accentColor)
+                BarMark(x: .value("Requests", user.count), y: .value("User", user.email == "web" ? (user.ip ?? "Web") : name(user.email)))
+                    .foregroundStyle(user.email == "server" ? Color.green : user.email == "web" ? Color.orange : Color.accentColor)
                     .annotation(position: .trailing) { Text("\(user.count)").font(.caption2).foregroundStyle(.secondary) }
             }
             .frame(height: CGFloat(max(1, usage.byUser.count)) * 36 + 30)
@@ -467,8 +471,8 @@ struct AdminView: View {
                     Spacer()
                     Text("\(user.count)").font(.subheadline.weight(.bold)).monospacedDigit()
                 }
-                Text(user.email == "server" ? "Server digest" : user.email).font(.caption)
-                Label(user.device ?? "Unknown device", systemImage: user.device == "iPad" ? "ipad" : user.device == "iPhone" ? "iphone" : "laptopcomputer")
+                Text(user.email == "server" ? "Server digest" : user.email == "web" ? "Web app visitor" : user.email).font(.caption)
+                Label(user.device ?? "Unknown device", systemImage: user.device == "iPad" || user.device == "Tablet" ? "ipad" : user.device == "iPhone" || user.device == "Mobile" ? "iphone" : "laptopcomputer")
                     .font(.caption).foregroundStyle(.secondary)
                 if let agent = user.userAgent {
                     Text(agent).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -511,8 +515,8 @@ struct AdminView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        badge("POST", .blue)
-                        Text(action.action).font(.subheadline.monospaced().weight(.semibold))
+                        badge(method(action.action), .blue)
+                        Text(path(action.action)).font(.subheadline.monospaced().weight(.semibold)).lineLimit(1)
                     }
                     Text("\(label(action.action)) · total requests: \(action.count) · \(action.failed) failed")
                         .font(.caption).foregroundStyle(.secondary)
@@ -540,16 +544,25 @@ struct AdminView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(date(event.at)?.formatted(date: .omitted, time: .standard) ?? "").font(.caption.monospaced()).foregroundStyle(.secondary)
-                    badge("POST", .blue)
-                    Text(event.action).font(.subheadline.monospaced().weight(.semibold)).lineLimit(1)
+                    badge(method(event.action), .blue)
+                    Text(path(event.action)).font(.subheadline.monospaced().weight(.semibold)).lineLimit(1)
                     Spacer()
                     badge(event.status.map(String.init) ?? (event.ok ? "OK" : "FAIL"), event.ok && (event.status ?? 200) < 400 ? .green : .red)
                 }
-                Text([event.latencyMs.map(duration), event.ip, event.email == "server" ? "Server digest" : event.email, event.device]
+                Text([event.latencyMs.map(duration), event.ip, event.email == "server" ? "Server digest" : event.email == "web" ? "Web app" : event.email, event.device]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
+    }
+
+    /// Web visits are logged as "GET /api/digests"; the app's own requests are all POSTs to one function.
+    private func method(_ action: String) -> String {
+        action.contains(" ") ? String(action.split(separator: " ")[0]) : "POST"
+    }
+
+    private func path(_ action: String) -> String {
+        action.contains(" ") ? action.split(separator: " ").dropFirst().joined(separator: " ") : action
     }
 
     private func badge(_ text: String, _ color: Color) -> some View {
