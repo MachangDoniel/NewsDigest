@@ -1,5 +1,6 @@
 import Foundation
 import Supabase
+import UIKit
 
 /// Talks to Supabase (read-only) and keeps an on-disk cache so the archive works offline.
 @MainActor
@@ -7,6 +8,9 @@ final class DigestStore: ObservableObject {
     enum AuthState { case unconfigured, signedOut, signedIn }
 
     @Published private(set) var authState: AuthState = .unconfigured
+    /// The signed-in account is in the server's `admins` table. Only decides what the app shows;
+    /// the server checks again on every admin request.
+    @Published private(set) var isAdmin = false
     @Published private(set) var dates: [String] = []
     @Published private(set) var bookmarks: [SavedItem] = []
 
@@ -63,8 +67,9 @@ final class DigestStore: ObservableObject {
         self.client = client
         authState = client.auth.currentSession == nil ? .signedOut : .signedIn
         Task { [weak self] in
-            for await (_, session) in client.auth.authStateChanges {
+            for await (event, session) in client.auth.authStateChanges {
                 self?.authState = session == nil ? .signedOut : .signedIn
+                if event == .initialSession || event == .signedIn || event == .signedOut { await self?.refreshAdmin() }
             }
         }
     }
@@ -84,24 +89,72 @@ final class DigestStore: ObservableObject {
         return try await withTimeout(seconds: 100) {
             try await client.functions.invoke(
                 name,
-                options: FunctionInvokeOptions(headers: ["Authorization": "Bearer \(session.accessToken)"], body: body)
+                options: FunctionInvokeOptions(headers: ["Authorization": "Bearer \(session.accessToken)", "X-Device": Self.device], body: body)
             )
         }
     }
 
-    private struct RunDigestRequest: Encodable { let action = "run_digest" }
+    /// Sent with each request so the Admin screen can show what kind of device is asking.
+    private static let device: String = {
+        #if targetEnvironment(simulator)
+        "Simulator"
+        #else
+        UIDevice.current.model
+        #endif
+    }()
+
+    private struct RunDigestRequest: Encodable {
+        let action = "run_digest"
+        var paper: String?
+        var date: String?
+        var force = false
+    }
     private struct RunDigestResponse: Decodable { let ok: Bool; let message: String? }
 
-    /// Starts today's server digest now instead of waiting for the next hourly run.
+    /// Starts the server digest now instead of waiting for the next hourly run (admins only).
+    /// `date` fills in a missed day; `force` rebuilds a digest that already exists.
     /// The `summarize` function triggers the GitHub workflow, so no GitHub token lives on the phone.
-    func runDigestNow() async throws -> (ok: Bool, message: String) {
-        let res: RunDigestResponse = try await invokeFunction("summarize", body: RunDigestRequest())
+    func runDigestNow(paper: Paper? = nil, date: String? = nil, force: Bool = false) async throws -> (ok: Bool, message: String) {
+        let request = RunDigestRequest(paper: paper?.rawValue, date: date, force: force)
+        let res: RunDigestResponse = try await invokeFunction("summarize", body: request)
         return (res.ok, res.message ?? (res.ok ? "Digest started." : "Couldn't start the digest."))
+    }
+
+    // MARK: - Admin
+
+    private struct ActionRequest: Encodable { let action: String }
+    private struct WhoAmI: Decodable { let admin: Bool }
+
+    private func refreshAdmin() async {
+        guard authState == .signedIn else { isAdmin = false; return }
+        let me: WhoAmI? = try? await invokeFunction("summarize", body: ActionRequest(action: "whoami"))
+        isAdmin = me?.admin ?? false
+    }
+
+    func adminOverview() async throws -> AdminOverview {
+        try await invokeFunction("summarize", body: ActionRequest(action: "admin_overview"))
+    }
+
+    private struct PingResponse: Decodable { let ok: Bool; let pingMs: Int }
+
+    /// Times one small database query on the server; nil if it failed.
+    func adminPing() async throws -> Int? {
+        let res: PingResponse = try await invokeFunction("summarize", body: ActionRequest(action: "admin_ping"))
+        return res.ok ? res.pingMs : nil
+    }
+
+    private struct OkResponse: Decodable { let ok: Bool; let message: String? }
+
+    /// Empties the usage log. Digests are not touched.
+    func adminResetUsage() async throws {
+        let res: OkResponse = try await invokeFunction("summarize", body: ActionRequest(action: "admin_reset_usage"))
+        if !res.ok { throw StoreError.server(res.message ?? "Couldn't reset the usage log.") }
     }
 
     func signOut() async {
         try? await client?.auth.signOut()
         authState = client == nil ? .unconfigured : .signedOut
+        isAdmin = false
     }
 
     // MARK: - Reading
@@ -195,8 +248,10 @@ func withTimeout<T: Sendable>(seconds: Double, _ operation: @escaping @Sendable 
 
 enum StoreError: LocalizedError {
     case notConfigured, signedOut, timedOut
+    case server(String)
     var errorDescription: String? {
         switch self {
+        case .server(let message): message
         case .notConfigured: "Connect your Supabase project in Settings first."
         case .signedOut: "Sign in on the Today tab to use ✨ Summarize."
         case .timedOut: "The AI took too long to answer."

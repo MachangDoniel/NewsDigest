@@ -41,3 +41,11 @@ export async function hasDigest(date: string, paper: PaperId): Promise<boolean> 
   if (error) throw new Error(`Supabase digests lookup: ${error.message}`);
   return (count ?? 0) > 0;
 }
+
+/** Counts one page the digest summarized, for the app's Admin usage screen. Never fails a run. */
+export async function logUsage(ok: boolean, latencyMs: number) {
+  await db()
+    .from("usage_events")
+    .insert({ email: "server", action: "digest", ok, latency_ms: latencyMs, device: process.env.CI ? "GitHub" : "Mac" })
+    .then(() => undefined, () => undefined);
+}

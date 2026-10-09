@@ -8,7 +8,13 @@
 //   → { ok: true, sections, mcqs, model, source } | { ok: false, reason: "quota"|"error", message }
 // POST { action: "chat", context, messages: [{ role: "user"|"model", text }] }
 //   → { ok: true, text, model } | { ok: false, reason, message }
-// POST { action: "run_digest", paper?: "dailystar"|"prothomalo" }
+// POST { action: "whoami" }
+//   → { ok: true, admin }   admin = the signed-in email is in the `admins` table
+// POST { action: "admin_overview" }   admins only
+//   → { ok: true, runs, workflow, database, storage, usage, users } for the app's Admin screen
+// POST { action: "admin_ping" }   admins only → { ok, pingMs }   one small database query, timed
+// POST { action: "admin_reset_usage" }   admins only → { ok }   empties the usage log
+// POST { action: "run_digest", paper?: "dailystar"|"prothomalo", date?: "YYYY-MM-DD", force?: boolean }   admins only
 //   Starts the "Daily digest" GitHub workflow now instead of waiting for the next hourly run.
 //   Needs GH_DISPATCH_TOKEN (fine-grained token, Actions: read and write on the repo) and
 //   GH_REPO ("owner/name"); GH_REF defaults to "main".
@@ -227,10 +233,11 @@ async function runDigest(body: any) {
   }
 
   const paper = ["dailystar", "prothomalo"].includes(body.paper) ? body.paper : "";
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(body.date ?? "") ? body.date : "";
   const res = await fetch(`${api}/dispatches`, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ ref: Deno.env.get("GH_REF") || "main", inputs: { paper, force: false } }),
+    body: JSON.stringify({ ref: Deno.env.get("GH_REF") || "main", inputs: { paper, date, force: body.force === true } }),
   }).catch(() => null);
   if (!res?.ok) {
     const detail = res ? `GitHub said ${res.status}` : "couldn't reach GitHub";
@@ -307,18 +314,199 @@ async function speak(body: any) {
   return url ? json({ ok: true, url, cached: false }) : json({ ok: false, reason: "error", message: "Couldn't share the saved audio." });
 }
 
+const service = () => createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+async function isAdmin(email?: string): Promise<boolean> {
+  if (!email) return false;
+  // Emails in `admins` are stored in lower case.
+  const { data } = await service().from("admins").select("email").eq("email", email.toLowerCase()).limit(1);
+  return (data?.length ?? 0) > 0;
+}
+
+/** Date (YYYY-MM-DD) in Dhaka, `daysAgo` days back. */
+const dhakaDay = (daysAgo = 0, from = Date.now()) => new Date(from + 6 * 3_600_000 - daysAgo * 86_400_000).toISOString().slice(0, 10);
+
+/** Everything the app's Admin screen shows, in one call. */
+async function adminOverview() {
+  const db = service();
+  const since = dhakaDay(9);
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  await db.from("usage_events").delete().lt("at", new Date(Date.now() - 30 * 86_400_000).toISOString());
+
+  const started = Date.now();
+  const [count, oldest, built, statuses, events, users, admins, stats] = await Promise.all([
+    db.from("digests").select("id", { count: "exact", head: true }),
+    db.from("digests").select("date").order("date").limit(1),
+    db.from("digests").select("date,paper,page_count,created_at").gte("date", since),
+    db.from("run_status").select("date,paper,state,message,updated_at").gte("date", since),
+    db.from("usage_events").select("at,email,action,ok,latency_ms,device").gte("at", weekAgo).order("at", { ascending: false }).limit(5000),
+    db.auth.admin.listUsers(),
+    db.from("admins").select("email"),
+    db.rpc("admin_db_stats"),
+  ]);
+  const pingMs = Date.now() - started;
+  const failed = [count, oldest, built, statuses, events, admins].find((r) => r.error)?.error;
+
+  // One row per paper per day for the last 10 days, newest first.
+  const runs = [];
+  for (let i = 0; i < 10; i++) {
+    const date = dhakaDay(i);
+    for (const paper of ["dailystar", "prothomalo"]) {
+      const digest = built.data?.find((d) => d.date === date && d.paper === paper);
+      const status = statuses.data?.find((s) => s.date === date && s.paper === paper);
+      runs.push({
+        date,
+        paper,
+        state: digest ? "ok" : status?.state ?? "missing",
+        message: digest ? null : status?.message ?? null,
+        pages: digest?.page_count ?? null,
+        at: digest?.created_at ?? status?.updated_at ?? null,
+      });
+    }
+  }
+
+  // "server" rows are pages the hourly digest summarized; everything else came from the app.
+  const today = dhakaDay();
+  const rows = events.data ?? [];
+  const todayRows = rows.filter((e) => dhakaDay(0, Date.parse(e.at)) === today);
+  const tally = (list: typeof rows) => {
+    const out: Record<string, number> = {};
+    for (const e of list) out[e.action] = (out[e.action] ?? 0) + 1;
+    return out;
+  };
+  const thisHour = Math.floor(Date.now() / 3_600_000);
+  const hourly = Array.from({ length: 24 }, (_, i) => {
+    const hour = thisHour - 23 + i;
+    const inHour = rows.filter((e) => Math.floor(Date.parse(e.at) / 3_600_000) === hour);
+    const server = inHour.filter((e) => e.email === "server").length;
+    return { at: new Date(hour * 3_600_000).toISOString(), app: inHour.length - server, server };
+  });
+  const perUser = new Map<string, { email: string; count: number; last: string; device: string | null }>();
+  const perAction = new Map<string, { action: string; count: number; failed: number; totalMs: number; timed: number }>();
+  for (const e of rows) {
+    const email = e.email ?? "unknown";
+    // Rows are newest first, so the first one seen for a user is their latest.
+    const u = perUser.get(email) ?? { email, count: 0, last: e.at, device: e.device };
+    u.count++;
+    perUser.set(email, u);
+    const a = perAction.get(e.action) ?? { action: e.action, count: 0, failed: 0, totalMs: 0, timed: 0 };
+    a.count++;
+    if (!e.ok) a.failed++;
+    if (e.latency_ms != null) { a.totalMs += e.latency_ms; a.timed++; }
+    perAction.set(e.action, a);
+  }
+  const adminEmails = new Set((admins.data ?? []).map((a) => a.email.toLowerCase()));
+  const size = stats.data ?? {};
+
+  return json({
+    ok: true,
+    runs,
+    workflow: await recentWorkflowRuns(),
+    database: {
+      ok: !failed,
+      message: failed?.message ?? null,
+      pingMs,
+      digests: count.count ?? 0,
+      firstDate: oldest.data?.[0]?.date ?? null,
+      latestDate: built.data?.map((d) => d.date).sort().at(-1) ?? null,
+    },
+    // Limits are Supabase's free plan: 500 MB database, 1 GB file storage.
+    storage: {
+      dbBytes: size.dbBytes ?? null,
+      dbLimitBytes: 500 * 1024 * 1024,
+      audioBytes: size.audioBytes ?? null,
+      audioLimitBytes: 1024 * 1024 * 1024,
+      audioFiles: size.audioFiles ?? null,
+      statusRows: size.runStatus ?? null,
+      usageRows: size.usageEvents ?? null,
+    },
+    usage: {
+      today: tally(todayRows),
+      week: tally(rows),
+      failedToday: todayRows.filter((e) => !e.ok).length,
+      failedWeek: rows.filter((e) => !e.ok).length,
+      usersToday: new Set(todayRows.filter((e) => e.email !== "server").map((e) => e.email)).size,
+      hourly,
+      byUser: [...perUser.values()].sort((a, b) => b.count - a.count),
+      byAction: [...perAction.values()]
+        .map((a) => ({ action: a.action, count: a.count, failed: a.failed, avgMs: a.timed ? Math.round(a.totalMs / a.timed) : null }))
+        .sort((a, b) => b.count - a.count),
+      recent: rows.slice(0, 50).map((e) => ({ at: e.at, email: e.email, action: e.action, ok: e.ok, latencyMs: e.latency_ms, device: e.device })),
+    },
+    users: (users.data?.users ?? []).map((u) => ({
+      email: u.email ?? "",
+      lastSignIn: u.last_sign_in_at ?? null,
+      admin: adminEmails.has((u.email ?? "").toLowerCase()),
+    })),
+  });
+}
+
+async function adminPing() {
+  const started = Date.now();
+  const { error } = await service().from("digests").select("id").limit(1);
+  return json({ ok: !error, pingMs: Date.now() - started, message: error?.message ?? null });
+}
+
+async function adminResetUsage() {
+  const { error } = await service().from("usage_events").delete().gte("id", 0);
+  return json({ ok: !error, message: error?.message ?? null });
+}
+
+/** The last few "Daily digest" runs on GitHub; empty when the GitHub token isn't set. */
+async function recentWorkflowRuns() {
+  const token = Deno.env.get("GH_DISPATCH_TOKEN");
+  const repo = Deno.env.get("GH_REPO");
+  if (!token || !repo) return [];
+  const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/daily-digest.yml/runs?per_page=8`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+  }).catch(() => null);
+  if (!res?.ok) return [];
+  return ((await res.json()).workflow_runs ?? []).map((r: any) => ({
+    id: r.id,
+    at: r.created_at,
+    event: r.event,
+    // "success" | "failure" | "cancelled" once finished; otherwise "queued" | "in_progress".
+    result: r.conclusion ?? r.status,
+  }));
+}
+
+const ADMIN_ACTIONS: Record<string, (body: any) => Promise<Response>> = {
+  run_digest: runDigest,
+  admin_overview: adminOverview,
+  admin_ping: adminPing,
+  admin_reset_usage: adminResetUsage,
+};
+const ACTIONS = ["summarize", "chat", "speak", "whoami", ...Object.keys(ADMIN_ACTIONS)];
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ ok: false, reason: "error", message: "POST only" }, 405);
+  const started = Date.now();
 
   // Only signed-in users of this project.
   const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!);
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user) return json({ ok: false, reason: "error", message: "Sign in first" }, 401);
+  const email = data.user.email;
 
   const body = await req.json().catch(() => ({}));
-  if (body.action === "chat") return chat(body);
-  if (body.action === "run_digest") return runDigest(body);
-  if (body.action === "speak") return speak(body);
-  return summarize(body);
+  const action = ACTIONS.includes(body.action) ? body.action : "summarize";
+
+  let res: Response;
+  if (action === "whoami") res = json({ ok: true, admin: await isAdmin(email) });
+  else if (action in ADMIN_ACTIONS) {
+    if (!(await isAdmin(email))) res = json({ ok: false, reason: "error", message: "Only an admin can do this." }, 403);
+    else res = await ADMIN_ACTIONS[action](body);
+  } else if (action === "chat") res = await chat(body);
+  else if (action === "speak") res = await speak(body);
+  else res = await summarize(body);
+
+  // For the Admin usage screen. Looking at that screen isn't itself counted.
+  if (!action.startsWith("admin_")) {
+    const ok = (await res.clone().json().catch(() => ({}))).ok === true;
+    // The app says what it runs on (iPhone / iPad / Simulator); see DigestStore.invokeFunction.
+    const device = (req.headers.get("X-Device") ?? "").replace(/[^\w .-]/g, "").slice(0, 40) || null;
+    await service().from("usage_events").insert({ email, action, ok, latency_ms: Date.now() - started, device }).then(() => undefined, () => undefined);
+  }
+  return res;
 });

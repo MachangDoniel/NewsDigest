@@ -31,6 +31,14 @@ struct SettingsView: View {
                     Text("Sign in with the user from your Supabase project (Authentication → Users). Not your newspaper login.")
                 }
 
+                if store.isAdmin {
+                    Section {
+                        NavigationLink { AdminView() } label: { Label("Admin", systemImage: "lock.shield") }
+                    } footer: {
+                        Text("Digest runs, database, usage and users. Only your admin account sees this.")
+                    }
+                }
+
                 if store.authState != .signedIn {
                     Section {
                         DisclosureGroup("Use a different Supabase project") {
@@ -76,11 +84,13 @@ struct SettingsView: View {
                     Text("The Gemini voice sounds natural in Bangla and English. It needs you to be signed in, and uses its own Gemini key on the server, separate from ✨ Summarize. Each section is made once and kept, so replaying it is instant. If it's unavailable or out of quota for the day, Apple's voice reads instead.")
                 }
 
-                Section("When a digest fails") {
-                    Label("Login expired: check the paper's EMAIL / PASSWORD secrets on GitHub (Settings → Secrets → Actions).", systemImage: "key")
-                    Label("Re-run anytime: GitHub → Actions → Daily digest → Run workflow.", systemImage: "arrow.clockwise")
+                if store.isAdmin {
+                    Section("When a digest fails") {
+                        Label("Login expired: check the paper's EMAIL / PASSWORD secrets on GitHub (Settings → Secrets → Actions).", systemImage: "key")
+                        Label("Re-run anytime from Admin, or GitHub → Actions → Daily digest → Run workflow.", systemImage: "arrow.clockwise")
+                    }
+                    .font(.footnote)
                 }
-                .font(.footnote)
             }
             .navigationTitle("Settings")
             .onAppear {

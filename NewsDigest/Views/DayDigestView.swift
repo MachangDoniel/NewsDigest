@@ -129,9 +129,9 @@ struct DayDigestView: View {
 
     // MARK: - Run now
 
-    /// Today, with at least one paper still missing: offer to build it now instead of waiting for the hourly run.
+    /// Today, with at least one paper still missing: offer an admin to build it now instead of waiting for the hourly run.
     private var canRunNow: Bool {
-        guard date == DigestDate.string(.now), !(loading && digests.isEmpty) else { return false }
+        guard store.isAdmin, date == DigestDate.string(.now), !(loading && digests.isEmpty) else { return false }
         return Set(digests.map(\.paper)).count < Paper.allCases.count
     }
 
