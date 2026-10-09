@@ -521,6 +521,14 @@ async function logWeb(req: Request, body: any) {
   return json({ ok: !error, saved: error ? 0 : Math.min(rows.length, room), message: error?.message ?? null });
 }
 
+/** One account may make 40 AI requests (summarize, ask, read aloud) a minute, so a runaway client can't drain the keys. */
+async function overAILimit(email?: string): Promise<boolean> {
+  if (!email) return false;
+  const { count } = await service().from("usage_events").select("id", { count: "exact", head: true })
+    .eq("email", email).in("action", ["summarize", "chat", "speak"]).gte("at", new Date(Date.now() - 60_000).toISOString());
+  return (count ?? 0) >= 40;
+}
+
 const ADMIN_ACTIONS: Record<string, (body: any) => Promise<Response>> = {
   run_digest: runDigest,
   admin_overview: adminOverview,
@@ -550,6 +558,8 @@ Deno.serve(async (req) => {
   else if (action in ADMIN_ACTIONS) {
     if (!(await isAdmin(email))) res = json({ ok: false, reason: "error", message: "Only an admin can do this." }, 403);
     else res = await ADMIN_ACTIONS[action](body);
+  } else if (await overAILimit(email)) {
+    res = json({ ok: false, reason: "busy", retryAfter: 30, message: "Too many AI requests in a minute. Try again shortly." });
   } else if (action === "chat") res = await chat(body);
   else if (action === "speak") res = await speak(body);
   else res = await summarize(body);
