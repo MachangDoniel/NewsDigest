@@ -39,6 +39,18 @@ struct SettingsView: View {
                     }
                 }
 
+                Section {
+                    Link(destination: AppConfig.webAppURL) {
+                        HStack {
+                            Label("View web app", systemImage: "globe")
+                            Spacer()
+                            Image(systemName: "arrow.up.right").font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text("Opens newsdigest.ai.studio in your browser.")
+                }
+
                 if store.authState != .signedIn {
                     Section {
                         DisclosureGroup("Use a different Supabase project") {

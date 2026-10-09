@@ -12,6 +12,9 @@
 //   → { ok: true, admin }   admin = the signed-in email is in the `admins` table
 // POST { action: "admin_overview" }   admins only
 //   → { ok: true, runs, workflow, database, storage, usage, users } for the app's Admin screen
+// POST { action: "log_web", events: [{ action, ok, status, latencyMs, device, ip, userAgent }] }
+//   Visits reported by the NewsDigest-Web server, for the Admin screen. No user sign-in: the
+//   request must carry the X-Web-Log-Key header matching the WEB_LOG_KEY secret.
 // POST { action: "admin_ping" }   admins only → { ok, pingMs }   one small database query, timed
 // POST { action: "admin_reset_usage" }   admins only → { ok }   empties the usage log
 // POST { action: "run_digest", paper?: "dailystar"|"prothomalo", date?: "YYYY-MM-DD", force?: boolean }   admins only
@@ -346,7 +349,7 @@ async function adminOverview() {
     db.from("admins").select("email"),
     db.rpc("admin_db_stats"),
     // Requests from the app this calendar month; each one is one Edge Function call.
-    db.from("usage_events").select("id", { count: "exact", head: true }).gte("at", monthStart).neq("email", "server"),
+    db.from("usage_events").select("id", { count: "exact", head: true }).gte("at", monthStart).not("email", "in", "(server,web)"),
   ]);
   const pingMs = Date.now() - started;
   const failed = [count, oldest, built, statuses, events, admins].find((r) => r.error)?.error;
@@ -383,23 +386,27 @@ async function adminOverview() {
     const hour = thisHour - 23 + i;
     const inHour = rows.filter((e) => Math.floor(Date.parse(e.at) / 3_600_000) === hour);
     const server = inHour.filter((e) => e.email === "server").length;
-    return { at: new Date(hour * 3_600_000).toISOString(), app: inHour.length - server, server };
+    const web = inHour.filter((e) => e.email === "web").length;
+    return { at: new Date(hour * 3_600_000).toISOString(), app: inHour.length - server - web, server, web };
   });
   const daily = Array.from({ length: 7 }, (_, i) => {
     const date = dhakaDay(6 - i);
     const inDay = rows.filter((e) => dhakaDay(0, Date.parse(e.at)) === date);
     const server = inDay.filter((e) => e.email === "server").length;
-    return { date, app: inDay.length - server, server, failed: inDay.filter((e) => !e.ok).length };
+    const web = inDay.filter((e) => e.email === "web").length;
+    return { date, app: inDay.length - server - web, server, web, failed: inDay.filter((e) => !e.ok).length };
   });
   const timedToday = todayRows.filter((e) => e.email !== "server" && e.latency_ms != null);
   const perUser = new Map<string, { email: string; count: number; last: string; device: string | null; ip: string | null; userAgent: string | null }>();
   const perAction = new Map<string, { action: string; count: number; failed: number; totalMs: number; timed: number }>();
   for (const e of rows) {
     const email = e.email ?? "unknown";
+    // Website visitors have no account, so they are told apart by address.
+    const who = email === "web" ? `web ${e.ip ?? ""}` : email;
     // Rows are newest first, so the first one seen for a user is their latest.
-    const u = perUser.get(email) ?? { email, count: 0, last: e.at, device: e.device, ip: e.ip, userAgent: e.user_agent };
+    const u = perUser.get(who) ?? { email, count: 0, last: e.at, device: e.device, ip: e.ip, userAgent: e.user_agent };
     u.count++;
-    perUser.set(email, u);
+    perUser.set(who, u);
     const a = perAction.get(e.action) ?? { action: e.action, count: 0, failed: 0, totalMs: 0, timed: 0 };
     a.count++;
     if (!e.ok) a.failed++;
@@ -441,7 +448,7 @@ async function adminOverview() {
       monthLimit: 500_000,
       avgMsToday: timedToday.length ? Math.round(timedToday.reduce((a, e) => a + e.latency_ms, 0) / timedToday.length) : null,
       daily,
-      usersToday: new Set(todayRows.filter((e) => e.email !== "server").map((e) => e.email)).size,
+      usersToday: new Set(todayRows.filter((e) => e.email !== "server").map((e) => (e.email === "web" ? `web ${e.ip ?? ""}` : e.email))).size,
       hourly,
       byUser: [...perUser.values()].sort((a, b) => b.count - a.count),
       byAction: [...perAction.values()]
@@ -486,6 +493,27 @@ async function recentWorkflowRuns() {
   }));
 }
 
+/** Visits reported by the NewsDigest-Web server (see its src/services/visitLog.ts). */
+async function logWeb(req: Request, body: any) {
+  const key = Deno.env.get("WEB_LOG_KEY");
+  if (!key || req.headers.get("X-Web-Log-Key") !== key) return json({ ok: false, reason: "error", message: "Not allowed" }, 403);
+  const text = (v: unknown, max: number) => (typeof v === "string" && v ? v.slice(0, max) : null);
+  const rows = (Array.isArray(body.events) ? body.events : []).slice(0, 100).map((e: any) => ({
+    email: "web",
+    action: text(e.action, 80) ?? "unknown",
+    ok: e.ok !== false,
+    status: Number.isInteger(e.status) ? e.status : null,
+    latency_ms: Number.isFinite(e.latencyMs) ? Math.round(e.latencyMs) : null,
+    device: text(e.device, 40),
+    ip: text(e.ip, 45),
+    user_agent: text(e.userAgent, 200),
+    ...(typeof e.at === "string" && !Number.isNaN(Date.parse(e.at)) ? { at: new Date(Date.parse(e.at)).toISOString() } : {}),
+  }));
+  if (!rows.length) return json({ ok: true, saved: 0 });
+  const { error } = await service().from("usage_events").insert(rows);
+  return json({ ok: !error, saved: error ? 0 : rows.length, message: error?.message ?? null });
+}
+
 const ADMIN_ACTIONS: Record<string, (body: any) => Promise<Response>> = {
   run_digest: runDigest,
   admin_overview: adminOverview,
@@ -497,6 +525,9 @@ const ACTIONS = ["summarize", "chat", "speak", "whoami", ...Object.keys(ADMIN_AC
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ ok: false, reason: "error", message: "POST only" }, 405);
   const started = Date.now();
+  const body = await req.json().catch(() => ({}));
+  // The website's server reports visits with its own key instead of a user sign-in.
+  if (body.action === "log_web") return logWeb(req, body);
 
   // Only signed-in users of this project.
   const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
@@ -505,7 +536,6 @@ Deno.serve(async (req) => {
   if (error || !data.user) return json({ ok: false, reason: "error", message: "Sign in first" }, 401);
   const email = data.user.email;
 
-  const body = await req.json().catch(() => ({}));
   const action = ACTIONS.includes(body.action) ? body.action : "summarize";
 
   let res: Response;

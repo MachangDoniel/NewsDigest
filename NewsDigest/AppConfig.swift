@@ -6,5 +6,6 @@ import Foundation
 /// Forks: replace these with your own project, or change the project in Settings.
 enum AppConfig {
     static let supabaseURL = "https://utjluiipjiznedsglqsm.supabase.co"
+    static let webAppURL = URL(string: "https://newsdigest.ai.studio/")!
     static let supabasePublishableKey = "sb_publishable_30UE1vzeEt2MzIR3ufVWYw_lr0ZQm7V"
 }
