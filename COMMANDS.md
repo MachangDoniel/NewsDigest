@@ -100,6 +100,10 @@ supabase secrets list --project-ref utjluiipjiznedsglqsm
 When `supabase/schema.sql` changes, open **Supabase → SQL Editor**, paste the new part, and press
 **Run**. Running the whole file again is safe too; it skips what already exists.
 
+The newest part is the admin setup at the bottom of the file (the `admins` and `usage_events`
+tables). Run it **before** deploying the Edge Function, or nobody counts as admin. To make another
+account an admin later, add its email (lower case) as a row in the `admins` table.
+
 The `speech` storage bucket (for saved read-aloud audio) is already created.
 
 ### GitHub side (the hourly digest)

@@ -148,3 +148,123 @@ enum DigestDate {
         return d.formatted(.dateTime.weekday(.wide).day().month(.abbreviated))
     }
 }
+
+/// What the Admin screen shows; built by the `summarize` function's `admin_overview` action.
+/// Encodable too, so the screen can export it as a file.
+struct AdminOverview: Codable {
+    struct Run: Codable, Identifiable {
+        let date: String
+        let paper: Paper
+        /// "ok", a `RunStatus` state, or "missing" when nothing was built or reported.
+        let state: String
+        let message: String?
+        let pages: Int?
+        var id: String { date + paper.rawValue }
+
+        var summary: String {
+            switch state {
+            case "ok": "Built" + (pages.map { " · \($0) pages" } ?? "")
+            case "challenge": "Blocked by a bot check"
+            case "login_expired": "Login expired"
+            case "not_published": "Edition not out yet"
+            case "error": "Failed"
+            default: "Not built"
+            }
+        }
+    }
+
+    struct WorkflowRun: Codable, Identifiable {
+        let id: Int
+        let at: String
+        let event: String
+        /// "success", "failure", "cancelled", or "queued" / "in_progress" while running.
+        let result: String
+    }
+
+    struct Database: Codable {
+        let ok: Bool
+        let message: String?
+        let pingMs: Int
+        let digests: Int
+        let firstDate: String?
+        let latestDate: String?
+    }
+
+    /// Real sizes against the Supabase free plan's limits. Nil when the server couldn't measure them.
+    struct Storage: Codable {
+        let dbBytes: Int?
+        let dbLimitBytes: Int
+        let audioBytes: Int?
+        let audioLimitBytes: Int
+        let audioFiles: Int?
+        let statusRows: Int?
+        let usageRows: Int?
+    }
+
+    struct Usage: Codable {
+        struct Hour: Codable, Identifiable { let at: String; let app: Int; let server: Int; var id: String { at } }
+        struct Day: Codable, Identifiable {
+            let date: String
+            let app: Int
+            let server: Int
+            let failed: Int
+            var id: String { date }
+        }
+        struct ByUser: Codable, Identifiable {
+            let email: String
+            let count: Int
+            let last: String
+            let device: String?
+            let ip: String?
+            let userAgent: String?
+            var id: String { email }
+        }
+        struct ByAction: Codable, Identifiable {
+            let action: String
+            let count: Int
+            let failed: Int
+            let avgMs: Int?
+            var id: String { action }
+        }
+        struct Event: Codable {
+            let at: String
+            let email: String?
+            let action: String
+            let ok: Bool
+            let latencyMs: Int?
+            let device: String?
+            let ip: String?
+            let status: Int?
+        }
+        /// Request counts by action ("summarize", "chat", "speak", "whoami", "run_digest", and
+        /// "digest" for pages the hourly server run summarized).
+        let today: [String: Int]
+        let week: [String: Int]
+        let failedToday: Int
+        let failedWeek: Int
+        /// App requests this calendar month against the free plan's Edge Function allowance.
+        let monthCalls: Int
+        let monthLimit: Int
+        let avgMsToday: Int?
+        let usersToday: Int
+        let hourly: [Hour]
+        let daily: [Day]
+        let byUser: [ByUser]
+        let byAction: [ByAction]
+        let recent: [Event]
+    }
+
+    struct User: Codable, Identifiable {
+        let email: String
+        let lastSignIn: String?
+        let admin: Bool
+        var id: String { email }
+    }
+
+    let runs: [Run]
+    let workflow: [WorkflowRun]
+    let database: Database
+    let storage: Storage
+    let usage: Usage
+    let users: [User]
+}

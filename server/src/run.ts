@@ -7,7 +7,7 @@ import { dhakaDate, parseDay, setPersonWatching, type Day } from "./papers/commo
 import { summarizePage, summarizeStories } from "./gemini.js";
 import { merge } from "./merge.js";
 import { pagePrompt, storiesPrompt, type DigestLang } from "./prompt.js";
-import { hasDigest, saveDigest, saveStatus, type RunState } from "./supabase.js";
+import { hasDigest, logUsage, saveDigest, saveStatus, type RunState } from "./supabase.js";
 import {
   CATEGORIES,
   ChallengeError,
@@ -125,6 +125,7 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], day: D
   const summaries: PageSummary[] = [];
   for (const [i, p] of pages.entries()) {
     if (i > 0) await sleep(delay);
+    const started = Date.now();
     try {
       const opts = { paper: paper.name, pageName: p.name, pageNo: p.pageNo, lang };
       const stories = p.stories ?? [];
@@ -135,7 +136,9 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], day: D
       const n = s.sections.reduce((a, x) => a + x.items.length, 0);
       console.log(`  page ${p.pageNo} ${p.name}: ${n} items (from ${stories.length ? `text, ${stories.length} stories` : "image"})`);
       summaries.push(s);
+      if (!DRY) await logUsage(true, Date.now() - started);
     } catch (e) {
+      if (!DRY) await logUsage(false, Date.now() - started);
       // One bad page shouldn't sink the whole digest. If every AI key is out of quota,
       // keep the paper's own headlines and opening lines instead of dropping the page.
       const fallback = paperFallback(p);
