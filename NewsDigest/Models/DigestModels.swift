@@ -203,6 +203,13 @@ struct AdminOverview: Codable {
 
     struct Usage: Codable {
         struct Hour: Codable, Identifiable { let at: String; let app: Int; let server: Int; var id: String { at } }
+        struct Day: Codable, Identifiable {
+            let date: String
+            let app: Int
+            let server: Int
+            let failed: Int
+            var id: String { date }
+        }
         struct ByUser: Codable, Identifiable {
             let email: String
             let count: Int
@@ -231,8 +238,13 @@ struct AdminOverview: Codable {
         let week: [String: Int]
         let failedToday: Int
         let failedWeek: Int
+        /// App requests this calendar month against the free plan's Edge Function allowance.
+        let monthCalls: Int
+        let monthLimit: Int
+        let avgMsToday: Int?
         let usersToday: Int
         let hourly: [Hour]
+        let daily: [Day]
         let byUser: [ByUser]
         let byAction: [ByAction]
         let recent: [Event]

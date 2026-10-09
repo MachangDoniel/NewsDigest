@@ -334,7 +334,9 @@ async function adminOverview() {
   await db.from("usage_events").delete().lt("at", new Date(Date.now() - 30 * 86_400_000).toISOString());
 
   const started = Date.now();
-  const [count, oldest, built, statuses, events, users, admins, stats] = await Promise.all([
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const [count, oldest, built, statuses, events, users, admins, stats, month] = await Promise.all([
     db.from("digests").select("id", { count: "exact", head: true }),
     db.from("digests").select("date").order("date").limit(1),
     db.from("digests").select("date,paper,page_count,created_at").gte("date", since),
@@ -343,6 +345,8 @@ async function adminOverview() {
     db.auth.admin.listUsers(),
     db.from("admins").select("email"),
     db.rpc("admin_db_stats"),
+    // Requests from the app this calendar month; each one is one Edge Function call.
+    db.from("usage_events").select("id", { count: "exact", head: true }).gte("at", monthStart).neq("email", "server"),
   ]);
   const pingMs = Date.now() - started;
   const failed = [count, oldest, built, statuses, events, admins].find((r) => r.error)?.error;
@@ -381,6 +385,13 @@ async function adminOverview() {
     const server = inHour.filter((e) => e.email === "server").length;
     return { at: new Date(hour * 3_600_000).toISOString(), app: inHour.length - server, server };
   });
+  const daily = Array.from({ length: 7 }, (_, i) => {
+    const date = dhakaDay(6 - i);
+    const inDay = rows.filter((e) => dhakaDay(0, Date.parse(e.at)) === date);
+    const server = inDay.filter((e) => e.email === "server").length;
+    return { date, app: inDay.length - server, server, failed: inDay.filter((e) => !e.ok).length };
+  });
+  const timedToday = todayRows.filter((e) => e.email !== "server" && e.latency_ms != null);
   const perUser = new Map<string, { email: string; count: number; last: string; device: string | null }>();
   const perAction = new Map<string, { action: string; count: number; failed: number; totalMs: number; timed: number }>();
   for (const e of rows) {
@@ -425,6 +436,11 @@ async function adminOverview() {
       week: tally(rows),
       failedToday: todayRows.filter((e) => !e.ok).length,
       failedWeek: rows.filter((e) => !e.ok).length,
+      // Supabase's free plan allows 500,000 Edge Function calls a month. Admin-screen calls aren't logged, so this runs slightly low.
+      monthCalls: month.count ?? 0,
+      monthLimit: 500_000,
+      avgMsToday: timedToday.length ? Math.round(timedToday.reduce((a, e) => a + e.latency_ms, 0) / timedToday.length) : null,
+      daily,
       usersToday: new Set(todayRows.filter((e) => e.email !== "server").map((e) => e.email)).size,
       hourly,
       byUser: [...perUser.values()].sort((a, b) => b.count - a.count),
