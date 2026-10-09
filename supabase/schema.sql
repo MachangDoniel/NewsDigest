@@ -22,8 +22,8 @@ create table if not exists public.run_status (
 
 create index if not exists digests_date_idx on public.digests (date desc);
 
--- Row Level Security: the app (signed-in user) can only read.
--- The server writes with the service_role key, which bypasses RLS.
+-- Row Level Security: anyone can read digests and run status (the web app reads them without
+-- signing in); nobody can write. The server writes with the service_role key, which bypasses RLS.
 -- Also turn OFF "Allow new users to sign up" in Authentication → Sign In / Providers,
 -- after creating your own user, so nobody else can get an account.
 alter table public.digests    enable row level security;
@@ -36,6 +36,14 @@ create policy "signed-in users read digests" on public.digests
 drop policy if exists "signed-in users read status" on public.run_status;
 create policy "signed-in users read status" on public.run_status
   for select to authenticated using (true);
+
+drop policy if exists "visitors read digests" on public.digests;
+create policy "visitors read digests" on public.digests
+  for select to anon using (true);
+
+drop policy if exists "visitors read status" on public.run_status;
+create policy "visitors read status" on public.run_status
+  for select to anon using (true);
 
 -- Read-aloud audio made by the summarize Edge Function (Gemini voice), one WAV per story section.
 -- Private: the function hands the app short-lived signed links. Old files are deleted by the
