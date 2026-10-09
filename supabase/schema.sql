@@ -83,3 +83,8 @@ language sql security definer set search_path = '' as $$
 $$;
 revoke execute on function public.admin_db_stats() from public, anon, authenticated;
 grant execute on function public.admin_db_stats() to service_role;
+
+-- Who asked and how it ended, for the Admin screen's "Who is accessing" and audit log views.
+alter table public.usage_events add column if not exists ip text;
+alter table public.usage_events add column if not exists user_agent text;
+alter table public.usage_events add column if not exists status int;

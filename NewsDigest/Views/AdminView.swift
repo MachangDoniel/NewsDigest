@@ -24,14 +24,24 @@ struct AdminView: View {
     @State private var runMessage: String?
 
     enum UsageTab: String, CaseIterable, Identifiable {
-        case traffic = "Traffic", users = "Who", actions = "Actions", log = "Log"
+        case traffic = "Traffic Trend", users = "Who Is Accessing", actions = "Endpoint Heatmap", log = "Live Audit Log"
         var id: String { rawValue }
+        var icon: String {
+            switch self {
+            case .traffic: "waveform.path.ecg"
+            case .users: "person.2"
+            case .actions: "square.stack.3d.up"
+            case .log: "clock"
+            }
+        }
     }
+    @State private var logFilter = ""
 
     var body: some View {
         List {
             if let overview {
                 cardsSection(overview)
+                usageSection(overview.usage)
             }
             runSection
             if let overview {
@@ -39,7 +49,6 @@ struct AdminView: View {
                 daysSection(overview.runs)
                 if !overview.workflow.isEmpty { workflowSection(overview.workflow) }
                 databaseSection(overview)
-                usageSection(overview.usage)
                 usersSection(overview.users)
             } else if let error {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
@@ -353,10 +362,27 @@ struct AdminView: View {
 
     private func usageSection(_ usage: AdminOverview.Usage) -> some View {
         Section {
-            Picker("Show", selection: $usageTab) {
-                ForEach(UsageTab.allCases) { Text($0.rawValue).tag($0) }
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible())], spacing: 8) {
+                ForEach(UsageTab.allCases) { tab in
+                    let count: Int? = switch tab {
+                    case .traffic: nil
+                    case .users: usage.byUser.count
+                    case .actions: usage.byAction.count
+                    case .log: usage.recent.count
+                    }
+                    Button { usageTab = tab } label: {
+                        Label(tab.rawValue + (count.map { " (\($0))" } ?? ""), systemImage: tab.icon)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .foregroundStyle(usageTab == tab ? Color.white : Color.primary)
+                            .background(usageTab == tab ? Color.accentColor : Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .pickerStyle(.segmented)
+            .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
             switch usageTab {
             case .traffic: trafficTab(usage)
             case .users: usersTab(usage)
@@ -372,7 +398,7 @@ struct AdminView: View {
                     .frame(width: 90)
             }
         } header: {
-            Text("Usage")
+            Text("Live telemetry")
         } footer: {
             Text("Last 7 days, counted from when this screen was added. Every number is measured. Google doesn't report how much AI quota is left, so the Gemini ring uses the daily limit set here: 1,500 to start, change it to match your keys (0 hides the ring).")
         }
@@ -432,12 +458,26 @@ struct AdminView: View {
             .frame(height: CGFloat(max(1, usage.byUser.count)) * 36 + 30)
             .padding(.vertical, 6)
         }
+        let total = max(1, usage.byUser.reduce(0) { $0 + $1.count })
         ForEach(usage.byUser) { user in
-            VStack(alignment: .leading, spacing: 2) {
-                Text(user.email == "server" ? "Server digest" : user.email).font(.subheadline)
-                Text("\(user.count) requests · \(user.device ?? "unknown device") · last \(ago(user.last))")
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Circle().fill(.green).frame(width: 7, height: 7)
+                    Text(user.ip ?? (user.email == "server" ? "GitHub runner" : "unknown address")).font(.subheadline.monospaced().weight(.semibold))
+                    Spacer()
+                    Text("\(user.count)").font(.subheadline.weight(.bold)).monospacedDigit()
+                }
+                Text(user.email == "server" ? "Server digest" : user.email).font(.caption)
+                Label(user.device ?? "Unknown device", systemImage: user.device == "iPad" ? "ipad" : user.device == "iPhone" ? "iphone" : "laptopcomputer")
                     .font(.caption).foregroundStyle(.secondary)
+                if let agent = user.userAgent {
+                    Text(agent).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                ProgressView(value: Double(user.count) / Double(total))
+                Text("\(Int((Double(user.count) / Double(total) * 100).rounded()))% of requests · last seen \(ago(user.last))")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
+            .padding(.vertical, 2)
         }
     }
 
@@ -468,24 +508,55 @@ struct AdminView: View {
             }
         }
         ForEach(usage.byAction) { action in
-            LabeledContent(label(action.action), value: "\(action.count) · \(action.failed) failed")
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        badge("POST", .blue)
+                        Text(action.action).font(.subheadline.monospaced().weight(.semibold))
+                    }
+                    Text("\(label(action.action)) · total requests: \(action.count) · \(action.failed) failed")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let ms = action.avgMs { badge("\(duration(ms)) avg", ms > 2000 ? .red : .green) }
+            }
         }
     }
 
     @ViewBuilder private func logTab(_ usage: AdminOverview.Usage) -> some View {
-        if usage.recent.isEmpty { Text("Nothing yet.").foregroundStyle(.secondary) }
-        ForEach(Array(usage.recent.enumerated()), id: \.offset) { _, event in
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: event.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                    .foregroundStyle(event.ok ? .green : .red)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(label(event.action)).font(.subheadline)
-                    Text([event.email == "server" ? "Server" : event.email, event.device, event.latencyMs.map(duration), ago(event.at)]
-                        .compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary)
+        let query = logFilter.trimmingCharacters(in: .whitespaces).lowercased()
+        let events = usage.recent.filter { event in
+            query.isEmpty || [event.action, label(event.action), event.email ?? "", event.ip ?? "", event.status.map(String.init) ?? "", event.device ?? ""]
+                .contains { $0.lowercased().contains(query) }
+        }
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Filter action, user, IP, status…", text: $logFilter)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        }
+        if events.isEmpty { Text(usage.recent.isEmpty ? "Nothing yet." : "No matches.").foregroundStyle(.secondary) }
+        ForEach(Array(events.enumerated()), id: \.offset) { _, event in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(date(event.at)?.formatted(date: .omitted, time: .standard) ?? "").font(.caption.monospaced()).foregroundStyle(.secondary)
+                    badge("POST", .blue)
+                    Text(event.action).font(.subheadline.monospaced().weight(.semibold)).lineLimit(1)
+                    Spacer()
+                    badge(event.status.map(String.init) ?? (event.ok ? "OK" : "FAIL"), event.ok && (event.status ?? 200) < 400 ? .green : .red)
                 }
+                Text([event.latencyMs.map(duration), event.ip, event.email == "server" ? "Server digest" : event.email, event.device]
+                    .compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
+    }
+
+    private func badge(_ text: String, _ color: Color) -> some View {
+        Text(text).font(.caption2.monospaced().weight(.bold))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .foregroundStyle(color)
+            .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 5))
     }
 
     /// Short name for a chart axis: the part of an email before the @.

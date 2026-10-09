@@ -341,7 +341,7 @@ async function adminOverview() {
     db.from("digests").select("date").order("date").limit(1),
     db.from("digests").select("date,paper,page_count,created_at").gte("date", since),
     db.from("run_status").select("date,paper,state,message,updated_at").gte("date", since),
-    db.from("usage_events").select("at,email,action,ok,latency_ms,device").gte("at", weekAgo).order("at", { ascending: false }).limit(5000),
+    db.from("usage_events").select("at,email,action,ok,latency_ms,device,ip,user_agent,status").gte("at", weekAgo).order("at", { ascending: false }).limit(5000),
     db.auth.admin.listUsers(),
     db.from("admins").select("email"),
     db.rpc("admin_db_stats"),
@@ -392,12 +392,12 @@ async function adminOverview() {
     return { date, app: inDay.length - server, server, failed: inDay.filter((e) => !e.ok).length };
   });
   const timedToday = todayRows.filter((e) => e.email !== "server" && e.latency_ms != null);
-  const perUser = new Map<string, { email: string; count: number; last: string; device: string | null }>();
+  const perUser = new Map<string, { email: string; count: number; last: string; device: string | null; ip: string | null; userAgent: string | null }>();
   const perAction = new Map<string, { action: string; count: number; failed: number; totalMs: number; timed: number }>();
   for (const e of rows) {
     const email = e.email ?? "unknown";
     // Rows are newest first, so the first one seen for a user is their latest.
-    const u = perUser.get(email) ?? { email, count: 0, last: e.at, device: e.device };
+    const u = perUser.get(email) ?? { email, count: 0, last: e.at, device: e.device, ip: e.ip, userAgent: e.user_agent };
     u.count++;
     perUser.set(email, u);
     const a = perAction.get(e.action) ?? { action: e.action, count: 0, failed: 0, totalMs: 0, timed: 0 };
@@ -447,7 +447,7 @@ async function adminOverview() {
       byAction: [...perAction.values()]
         .map((a) => ({ action: a.action, count: a.count, failed: a.failed, avgMs: a.timed ? Math.round(a.totalMs / a.timed) : null }))
         .sort((a, b) => b.count - a.count),
-      recent: rows.slice(0, 50).map((e) => ({ at: e.at, email: e.email, action: e.action, ok: e.ok, latencyMs: e.latency_ms, device: e.device })),
+      recent: rows.slice(0, 100).map((e) => ({ at: e.at, email: e.email, action: e.action, ok: e.ok, latencyMs: e.latency_ms, device: e.device, ip: e.ip, status: e.status })),
     },
     users: (users.data?.users ?? []).map((u) => ({
       email: u.email ?? "",
@@ -522,7 +522,11 @@ Deno.serve(async (req) => {
     const ok = (await res.clone().json().catch(() => ({}))).ok === true;
     // The app says what it runs on (iPhone / iPad / Simulator); see DigestStore.invokeFunction.
     const device = (req.headers.get("X-Device") ?? "").replace(/[^\w .-]/g, "").slice(0, 40) || null;
-    await service().from("usage_events").insert({ email, action, ok, latency_ms: Date.now() - started, device }).then(() => undefined, () => undefined);
+    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim().slice(0, 45) || null;
+    const user_agent = (req.headers.get("user-agent") ?? "").slice(0, 200) || null;
+    await service().from("usage_events")
+      .insert({ email, action, ok, latency_ms: Date.now() - started, device, ip, user_agent, status: res.status })
+      .then(() => undefined, () => undefined);
   }
   return res;
 });

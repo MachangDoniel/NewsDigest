@@ -215,6 +215,8 @@ struct AdminOverview: Codable {
             let count: Int
             let last: String
             let device: String?
+            let ip: String?
+            let userAgent: String?
             var id: String { email }
         }
         struct ByAction: Codable, Identifiable {
@@ -231,6 +233,8 @@ struct AdminOverview: Codable {
             let ok: Bool
             let latencyMs: Int?
             let device: String?
+            let ip: String?
+            let status: Int?
         }
         /// Request counts by action ("summarize", "chat", "speak", "whoami", "run_digest", and
         /// "digest" for pages the hourly server run summarized).
