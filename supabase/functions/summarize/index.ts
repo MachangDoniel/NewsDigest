@@ -510,8 +510,15 @@ async function logWeb(req: Request, body: any) {
     ...(typeof e.at === "string" && !Number.isNaN(Date.parse(e.at)) ? { at: new Date(Date.parse(e.at)).toISOString() } : {}),
   }));
   if (!rows.length) return json({ ok: true, saved: 0 });
-  const { error } = await service().from("usage_events").insert(rows);
-  return json({ ok: !error, saved: error ? 0 : rows.length, message: error?.message ?? null });
+  // A flood of visits must not fill the database: keep at most 1,000 web rows an hour and 7 days of them.
+  const db = service();
+  await db.from("usage_events").delete().eq("email", "web").lt("at", new Date(Date.now() - 7 * 86_400_000).toISOString());
+  const { count } = await db.from("usage_events").select("id", { count: "exact", head: true })
+    .eq("email", "web").gte("at", new Date(Date.now() - 3_600_000).toISOString());
+  const room = Math.max(0, 1000 - (count ?? 0));
+  if (!room) return json({ ok: true, saved: 0, message: "Hourly limit reached" });
+  const { error } = await db.from("usage_events").insert(rows.slice(0, room));
+  return json({ ok: !error, saved: error ? 0 : Math.min(rows.length, room), message: error?.message ?? null });
 }
 
 const ADMIN_ACTIONS: Record<string, (body: any) => Promise<Response>> = {
