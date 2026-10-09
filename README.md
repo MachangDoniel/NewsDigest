@@ -111,13 +111,14 @@ Then add the same values as repository secrets and trigger **Actions → Daily d
 
 ```bash
 brew install xcodegen
+cp Supabase.example.xcconfig Supabase.xcconfig   # then put your project's host and publishable key in it
 xcodegen generate
 open NewsDigest.xcodeproj
 ```
 
 Run on a simulator or device, then sign in on the **Today** tab with the user you created in Supabase.
 
-The app has this project's Supabase URL and publishable key built in ([`AppConfig.swift`](NewsDigest/AppConfig.swift)). If you run your own copy, change them there or under **Settings → Use a different Supabase project**. Never put the service key in the app.
+The app is built with the Supabase host and publishable key from `Supabase.xcconfig`, which git ignores, so no keys are in this repository. You can also enter a project under **Settings → Use a different Supabase project**. Never put the service key in the app.
 
 **Ask → BCS summary** needs the `summarize` Edge Function ([`supabase/functions/summarize`](supabase/functions/summarize/index.ts)): deploy it in Supabase → Edge Functions, and add `GEMINI_API_KEYS` (and optionally `GROQ_API_KEYS`) under Edge Functions → Secrets.
 
