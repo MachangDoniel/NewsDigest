@@ -12,6 +12,9 @@ build/
 NewsDigest.xcodeproj/
 Generated/
 
+## Your Supabase project (copy Supabase.example.xcconfig)
+Supabase.xcconfig
+
 ## Server
 server/node_modules/
 server/.env

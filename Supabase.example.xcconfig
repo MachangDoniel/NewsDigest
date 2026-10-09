@@ -1,0 +1,5 @@
+// Copy this file to Supabase.xcconfig (which git ignores) and fill in your own project,
+// from the Supabase dashboard: Project Settings -> API. Then run `xcodegen generate`.
+// Host only, without https:// (two slashes start a comment in this kind of file).
+SUPABASE_HOST = your-project.supabase.co
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_your_key
