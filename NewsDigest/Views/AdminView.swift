@@ -12,8 +12,9 @@ struct AdminView: View {
     @State private var exportFile: URL?
     @State private var pingResult: String?
     @State private var usageTab = UsageTab.traffic
-    /// Your own daily AI allowance, for the ring on the AI card. Google doesn't report one.
-    @AppStorage("adminAIDailyLimit") private var aiDailyLimit = 0
+    /// Daily AI allowance for the ring on the Gemini card. Google doesn't report one, so it starts
+    /// at the free tier's usual 1,500 a day and the admin can change it.
+    @AppStorage("adminAIDailyLimit") private var aiDailyLimit = 1500
 
     @State private var paper: Paper?
     @State private var pastDay = false
@@ -116,11 +117,11 @@ struct AdminView: View {
         let dbFree = o.storage.dbBytes.map { max(0, o.storage.dbLimitBytes - $0) }
         return Section {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                card("Server calls, month", value: "\(max(0, o.usage.monthLimit - o.usage.monthCalls).formatted())", unit: "left",
+                card("Supabase monthly quota", value: "\(max(0, o.usage.monthLimit - o.usage.monthCalls).formatted())", unit: "requests left this month",
                      detail: "Used \(o.usage.monthCalls.formatted()) of \(o.usage.monthLimit.formatted())",
                      used: Double(o.usage.monthCalls) / Double(max(o.usage.monthLimit, 1)), tint: .green)
-                card("AI calls today", value: aiDailyLimit > 0 ? "\(max(0, aiDailyLimit - ai).formatted())" : "\(ai)", unit: aiDailyLimit > 0 ? "left" : "made",
-                     detail: aiDailyLimit > 0 ? "Used \(ai) of your limit \(aiDailyLimit.formatted())" : "Set a daily limit below to see what's left",
+                card("Gemini AI daily quota", value: aiDailyLimit > 0 ? "\(max(0, aiDailyLimit - ai).formatted())" : "\(ai)", unit: aiDailyLimit > 0 ? "AI calls left today" : "AI calls made today",
+                     detail: aiDailyLimit > 0 ? "Used \(ai) of \(aiDailyLimit.formatted()) (limit set below)" : "Set a daily limit below to see what's left",
                      used: aiDailyLimit > 0 ? Double(ai) / Double(aiDailyLimit) : nil, tint: .purple)
                 card("Database storage", value: megabytes(o.storage.dbBytes), unit: "",
                      detail: "\(megabytes(dbFree)) free of \(megabytes(o.storage.dbLimitBytes)) · \(o.database.digests) digests",
@@ -128,7 +129,7 @@ struct AdminView: View {
                 card("Saved audio", value: megabytes(o.storage.audioBytes), unit: "",
                      detail: "\(o.storage.audioFiles ?? 0) files · of \(megabytes(o.storage.audioLimitBytes))",
                      used: fraction(o.storage.audioBytes, o.storage.audioLimitBytes), tint: .orange)
-                card("App requests today", value: "\(requests)", unit: "",
+                card("Server & traffic", value: "\(requests)", unit: "requests handled today",
                      detail: "\(o.usage.usersToday) user\(o.usage.usersToday == 1 ? "" : "s") · \(o.usage.failedToday) failed")
                 card("Response time", value: o.usage.avgMsToday.map(duration) ?? "–", unit: "",
                      detail: "Average today · database ping \(o.database.pingMs) ms")
@@ -363,7 +364,7 @@ struct AdminView: View {
             case .log: logTab(usage)
             }
             HStack {
-                Text("Your AI daily limit")
+                Text("Gemini daily limit")
                 Spacer()
                 TextField("none", value: $aiDailyLimit, format: .number)
                     .keyboardType(.numberPad)
@@ -373,7 +374,7 @@ struct AdminView: View {
         } header: {
             Text("Usage")
         } footer: {
-            Text("Last 7 days, counted from when this screen was added. Every number is measured. Google doesn't report how much AI quota is left, so the AI ring uses the daily limit you type here (0 hides it).")
+            Text("Last 7 days, counted from when this screen was added. Every number is measured. Google doesn't report how much AI quota is left, so the Gemini ring uses the daily limit set here: 1,500 to start, change it to match your keys (0 hides the ring).")
         }
     }
 
