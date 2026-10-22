@@ -1,7 +1,7 @@
 import Foundation
 
 /// A Kokoro voice pack from sherpa-onnx's releases. Packs live in a folder shared with
-/// Speak Partner (App Group `group.com.donieltripura.voices`, `tts_models/<id>`), so a pack
+/// Speak Partner (App Group `group.com.neuralsound.voicepacks`, `tts_models/<id>`), so a pack
 /// either app has downloaded is used by both without downloading it again.
 struct VoicePack: Identifiable, Hashable {
     let id: String
@@ -92,7 +92,7 @@ struct KokoroChoice: Hashable {
 /// Downloads, unpacks and deletes voice packs in the shared folder.
 @MainActor
 final class VoicePacks: ObservableObject {
-    static let appGroup = "group.com.donieltripura.voices"
+    static let appGroup = "group.com.neuralsound.voicepacks"
 
     /// Download or unpack progress per pack id: 0…1 while downloading, nil once done.
     @Published private(set) var progress: [String: Double] = [:]
