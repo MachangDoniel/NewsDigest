@@ -16,6 +16,16 @@ targets:
       - path: NewsDigest
     dependencies:
       - package: Supabase
+      # On-device Kokoro voice. Not in git: run scripts/fetch-sherpa-onnx.sh first.
+      - framework: Vendor/SherpaOnnxC.xcframework
+        embed: true
+      - sdk: libbz2.tbd   # unpacking voice packs (.tar.bz2)
+    entitlements:
+      path: NewsDigest/NewsDigest.entitlements
+      properties:
+        # Shared with Speak Partner, so a Kokoro voice pack is downloaded once per phone.
+        com.apple.security.application-groups:
+          - group.com.donieltripura.voices
     info:
       path: Generated/Info.plist
       properties:
@@ -46,5 +56,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        DEVELOPMENT_TEAM: ""
+        # The App Group needs a paid team, and the same one as Speak Partner.
+        DEVELOPMENT_TEAM: W49J7LTUV4
+        SWIFT_OBJC_BRIDGING_HEADER: NewsDigest/NewsDigest-Bridging-Header.h
         CODE_SIGN_STYLE: Automatic

@@ -93,7 +93,15 @@ struct SettingsView: View {
                 } header: {
                     Text("Read aloud")
                 } footer: {
-                    Text("The Gemini voice sounds natural in Bangla and English. It needs you to be signed in, and uses its own Gemini key on the server, separate from ✨ Summarize. Each section is made once and kept, so replaying it is instant. If it's unavailable or out of quota for the day, Apple's voice reads instead.")
+                    if voice == "kokoro" {
+                        Text("Kokoro makes the voice on this iPhone, so English needs no internet or quota. Pick a pack and a voice below.")
+                    } else {
+                        Text("The Gemini voice sounds natural in Bangla and English. It needs you to be signed in, and uses its own Gemini key on the server, separate from ✨ Summarize. Each section is made once and kept, so replaying it is instant. If it's unavailable or out of quota for the day, Apple's voice reads instead.")
+                    }
+                }
+
+                if voice == "kokoro" {
+                    KokoroSettings()
                 }
 
                 if store.isAdmin {
