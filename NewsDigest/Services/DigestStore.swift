@@ -13,6 +13,8 @@ final class DigestStore: ObservableObject {
     @Published private(set) var isAdmin = false
     @Published private(set) var dates: [String] = []
     @Published private(set) var bookmarks: [SavedItem] = []
+    /// Which papers the server has for each recent date; nil until it has answered once.
+    @Published private(set) var coverage: [String: Set<Paper>]?
 
     private var client: SupabaseClient?
     private var cache: [String: [Digest]] = [:]       // date -> digests
@@ -191,6 +193,47 @@ final class DigestStore: ObservableObject {
         for (k, v) in byDate { cache[k] = v.sorted { $0.paper.rawValue < $1.paper.rawValue } }
         dates = cache.keys.sorted(by: >)
         persist()
+        await refreshCoverage()
+    }
+
+    // MARK: - Missing papers
+
+    private static let coverageDays = 30
+    private static let watchedDays = 7
+    private struct DigestKey: Decodable { let date: String; let paper: Paper }
+
+    /// `count` days before today in Dhaka, newest first. Today isn't included: it may not be out yet.
+    private func pastDays(_ count: Int) -> [String] {
+        (1...count).compactMap { Calendar.dhaka.date(byAdding: .day, value: -$0, to: .now) }.map(DigestDate.string)
+    }
+
+    /// Asks only for dates and papers, so it's cheap enough to run each time the app opens.
+    func refreshCoverage() async {
+        guard let client, let since = pastDays(Self.coverageDays).last else { return }
+        async let digestData = client.from("digests").select("date,paper").gte("date", value: since).execute().data
+        async let statusData = client.from("run_status").select().gte("date", value: since).execute().data
+        guard let keys = try? decoder.decode([DigestKey].self, from: try await digestData) else { return }
+        var saved: [String: Set<Paper>] = [:]
+        for key in keys { saved[key.date, default: []].insert(key.paper) }
+        coverage = saved
+        if let statuses = try? decoder.decode([RunStatus].self, from: try await statusData) {
+            statusCache.merge(Dictionary(grouping: statuses, by: \.date)) { _, new in new }
+        }
+    }
+
+    /// Papers the server doesn't have for this date. Empty for today and for dates too old to check.
+    func missingPapers(_ date: String) -> [Paper] {
+        guard let coverage, pastDays(Self.coverageDays).contains(date) else { return [] }
+        return Paper.allCases.filter { !(coverage[date] ?? []).contains($0) }
+    }
+
+    /// Missing papers in the last week: the ones the server is still retrying. Shown on the Archive tab.
+    var missingThisWeek: Int { pastDays(Self.watchedDays).reduce(0) { $0 + missingPapers($1).count } }
+
+    /// Every date to list in the Archive, including recent ones with a paper missing.
+    var archiveDates: [String] {
+        guard coverage != nil else { return dates }
+        return Set(dates).union(pastDays(Self.coverageDays)).sorted(by: >)
     }
 
     func search(_ query: String) -> [SavedItem] {

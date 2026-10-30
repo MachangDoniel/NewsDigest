@@ -2,8 +2,8 @@ name: Daily digest
 
 on:
   schedule:
-    # Every hour from 06:00 to 23:00 Dhaka time (UTC+6). Once a paper is done, later runs skip it;
-    # once both are done, runs stop before installing the browser.
+    # Every hour from 06:00 to 23:00 Dhaka time (UTC+6). Each run does today, then fills in anything
+    # missing from the last 7 days; once all of that is done, runs stop before installing the browser.
     - cron: "0 0-17 * * *"
   workflow_dispatch:
     inputs:
@@ -25,7 +25,7 @@ concurrency:
 jobs:
   digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: server

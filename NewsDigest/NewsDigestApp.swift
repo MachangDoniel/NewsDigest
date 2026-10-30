@@ -17,6 +17,7 @@ struct NewsDigestApp: App {
                 ArchiveView()
                     .tabItem { Label("Archive", systemImage: "calendar") }
                     .tag(AppTab.archive)
+                    .badge(store.missingThisWeek)
                 PapersView()
                     .tabItem { Label("Papers", systemImage: "newspaper") }
                     .tag(AppTab.papers)
@@ -24,6 +25,7 @@ struct NewsDigestApp: App {
                     .tabItem { Label("Settings", systemImage: "gearshape") }
                     .tag(AppTab.settings)
             }
+            .task { await store.refreshCoverage() }
             .environmentObject(store)
             .environmentObject(router)
         }

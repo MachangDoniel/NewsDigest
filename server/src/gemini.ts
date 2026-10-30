@@ -49,6 +49,9 @@ const RESPONSE_SCHEMA = {
 
 const pool = new KeyPool("GEMINI_API_KEYS", "GEMINI_API_KEY");
 
+// Slow but good answers have taken close to 3 minutes; past that, give up and try the next model.
+const REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_SECONDS || 180) * 1000;
+
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
 async function imageParts(image: { mime: string; data: Buffer }, prompt: string): Promise<Part[]> {
@@ -77,6 +80,7 @@ async function generateSummary(parts: Part[], model: string, backoff: boolean): 
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       }),
     { backoff },
   );
@@ -111,17 +115,31 @@ function geminiModels(): string[] {
   return [primary, ...fallbacks];
 }
 
+// A model that times out twice in a row is skipped for the rest of the run: waiting on it costs
+// minutes a page, enough to run the job out of time.
+const TIMEOUTS_BEFORE_SKIP = 2;
+const timeoutsInARow = new Map<string, number>();
+
 /** Tries each Gemini model in turn; the last one waits and retries on rate limits. */
 async function withModelChain(parts: Part[], source: "image" | "text", allowFinalBackoff: boolean): Promise<PageSummary> {
   if (!pool.configured()) throw new Error("GEMINI_API_KEYS is not set");
   let lastError: unknown;
   const models = geminiModels();
   for (const [i, model] of models.entries()) {
+    const isLast = i === models.length - 1;
+    if (!isLast && (timeoutsInARow.get(model) ?? 0) >= TIMEOUTS_BEFORE_SKIP) continue;
     try {
-      return tagModel(await generateSummary(parts, model, allowFinalBackoff && i === models.length - 1), model, source);
+      const summary = tagModel(await generateSummary(parts, model, allowFinalBackoff && isLast), model, source);
+      timeoutsInARow.delete(model);
+      return summary;
     } catch (e) {
       lastError = e;
       console.warn(`    ${model} failed: ${(e as Error).message.split("\n")[0].slice(0, 100)}`);
+      if ((e as Error).name === "TimeoutError") {
+        const n = (timeoutsInARow.get(model) ?? 0) + 1;
+        timeoutsInARow.set(model, n);
+        if (!isLast && n === TIMEOUTS_BEFORE_SKIP) console.warn(`    skipping ${model} for the rest of this run`);
+      }
     }
   }
   throw lastError;
@@ -162,6 +180,7 @@ export async function groupDuplicatesGemini(prompt: string): Promise<number[][] 
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: { responseMimeType: "application/json", temperature: 0 },
           }),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         }),
       { backoff: false },
     );

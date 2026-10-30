@@ -9,7 +9,7 @@ struct ArchiveView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if store.authState != .signedIn && store.dates.isEmpty {
+                if store.authState != .signedIn && store.archiveDates.isEmpty {
                     ConnectPrompt()
                 } else if !query.isEmpty {
                     results(store.search(query), empty: "No matches for “\(query)”")
@@ -42,10 +42,25 @@ struct ArchiveView: View {
 
     private var days: some View {
         List {
+            if store.missingThisWeek > 0 {
+                Section {
+                    Label {
+                        Text("\(store.missingThisWeek) missing in the last 7 days")
+                            .font(.subheadline.weight(.semibold))
+                        Text("The server tries these again every hour.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                }
+            }
             ForEach(groupedByMonth, id: \.0) { month, dates in
                 Section(month) {
                     ForEach(dates, id: \.self) { date in
-                        NavigationLink(value: date) { DayRow(date: date, digests: store.cached(date)) }
+                        NavigationLink(value: date) {
+                            DayRow(date: date, digests: store.cached(date), missing: store.missingPapers(date))
+                        }
                     }
                 }
             }
@@ -53,7 +68,7 @@ struct ArchiveView: View {
         .listStyle(.insetGrouped)
         .refreshable { try? await store.refreshArchive() }
         .overlay {
-            if store.dates.isEmpty {
+            if store.archiveDates.isEmpty {
                 ContentUnavailableView("No digests yet", systemImage: "tray", description: Text("They'll show up here after the first morning run."))
             }
         }
@@ -62,7 +77,7 @@ struct ArchiveView: View {
     private var groupedByMonth: [(String, [String])] {
         var order: [String] = []
         var dict: [String: [String]] = [:]
-        for d in store.dates {
+        for d in store.archiveDates {
             let month = DigestDate.date(d).formatted(.dateTime.month(.wide).year())
             if dict[month] == nil { order.append(month) }
             dict[month, default: []].append(d)
@@ -86,6 +101,7 @@ struct ArchiveView: View {
 private struct DayRow: View {
     let date: String
     let digests: [Digest]
+    let missing: [Paper]
 
     var body: some View {
         HStack(spacing: 14) {
@@ -101,10 +117,20 @@ private struct DayRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(DigestDate.pretty(date)).font(.subheadline.weight(.semibold))
                 HStack(spacing: 6) {
-                    ForEach(digests) { d in
+                    ForEach(digests.filter { !missing.contains($0.paper) }) { d in
                         PaperBadge(paper: d.paper)
                         Text("\(d.itemCount)").font(.caption).foregroundStyle(.secondary)
                     }
+                }
+                if !missing.isEmpty {
+                    Label(
+                        missing.count == Paper.allCases.count
+                            ? "Both papers missing"
+                            : "\(missing.map(\.shortName).joined(separator: ", ")) missing",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
                 }
             }
         }
