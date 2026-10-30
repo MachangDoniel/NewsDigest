@@ -3,7 +3,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { chromium, type Browser } from "playwright";
 import { captureDailyStar } from "./papers/dailyStar.js";
 import { captureProthomAlo } from "./papers/prothomAlo.js";
-import { dhakaDate, parseDay, setPersonWatching, type Day } from "./papers/common.js";
+import { parseDay, recentDays, setPersonWatching, type Day } from "./papers/common.js";
 import { summarizePage, summarizeStories } from "./gemini.js";
 import { merge } from "./merge.js";
 import { pagePrompt, storiesPrompt, type DigestLang } from "./prompt.js";
@@ -175,33 +175,44 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], day: D
 }
 
 async function main() {
-  const day = DATE ? parseDay(DATE) : dhakaDate();
-  const date = day.iso;
+  // A plain run does today, then catches up on the last week. --date and --force do just one day.
+  const days = DATE ? [parseDay(DATE)] : FORCE ? recentDays(1) : recentDays();
+  const today = days[0].iso;
   const override = process.env.DIGEST_LANG as DigestLang | "auto" | undefined;
   let browser = await chromium.launch();
   let failures = 0;
+  // A paper showing a bot check won't let us in for older dates either; leave it for a later run.
+  const blocked = new Set<PaperId>();
   try {
-    for (const paper of PAPERS.filter((p) => !ONLY || p.id === ONLY)) {
-      const lang = override && override !== "auto" ? override : paper.lang;
-      try {
+    for (const day of days) {
+      const date = day.iso;
+      for (const paper of PAPERS.filter((p) => !ONLY || p.id === ONLY)) {
+        if (blocked.has(paper.id)) continue;
+        // Keep the log to dates with work to do; runPaper checks again for the date it was asked for.
+        if (date !== today && !DRY && (await hasDigest(date, paper.id))) continue;
+        const lang = override && override !== "auto" ? override : paper.lang;
         try {
-          await runPaper(browser, paper, day, lang);
+          try {
+            await runPaper(browser, paper, day, lang);
+          } catch (e) {
+            // On your own Mac, show the browser so you can answer the check yourself. Never on GitHub.
+            if (!(e instanceof ChallengeError) || process.env.CI) throw e;
+            console.log("  bot check shown; opening a browser window so you can answer it");
+            await browser.close();
+            browser = await chromium.launch({ headless: false });
+            setPersonWatching(true);
+            await runPaper(browser, paper, day, lang);
+          }
         } catch (e) {
-          // On your own Mac, show the browser so you can answer the check yourself. Never on GitHub.
-          if (!(e instanceof ChallengeError) || process.env.CI) throw e;
-          console.log("  bot check shown; opening a browser window so you can answer it");
-          await browser.close();
-          browser = await chromium.launch({ headless: false });
-          setPersonWatching(true);
-          await runPaper(browser, paper, day, lang);
+          const state = stateFor(e);
+          const message = (e as Error).message;
+          console.error(`  ✗ ${state}: ${message}`);
+          if (state === "challenge") blocked.add(paper.id);
+          // Not published yet isn't a failure; a later scheduled run picks it up. Older dates
+          // are shown as missing in the app's Archive, and a run stays green if only those failed.
+          if (state !== "not_published" && date === today) failures++;
+          if (!DRY) await saveStatus({ date, paper: paper.id, state, message }).catch((err) => console.error(err));
         }
-      } catch (e) {
-        const state = stateFor(e);
-        const message = (e as Error).message;
-        console.error(`  ✗ ${state}: ${message}`);
-        // Not published yet isn't a failure; a later scheduled run picks it up.
-        if (state !== "not_published") failures++;
-        if (!DRY) await saveStatus({ date, paper: paper.id, state, message }).catch((err) => console.error(err));
       }
     }
   } finally {
