@@ -15,8 +15,8 @@ export function dhakaDate(date = new Date()) {
 
 export type Day = ReturnType<typeof dhakaDate>;
 
-/** Today and the days before it, newest first. Scheduled runs fill in whatever is missing from these. */
-export function recentDays(count = 7): Day[] {
+/** Today and the 7 days before it, newest first. Scheduled runs fill in whatever is missing from these. */
+export function recentDays(count = 8): Day[] {
   return Array.from({ length: count }, (_, i) => dhakaDate(new Date(Date.now() - i * 24 * 60 * 60 * 1000)));
 }
 
