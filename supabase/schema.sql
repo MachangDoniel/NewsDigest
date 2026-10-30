@@ -52,6 +52,12 @@ insert into storage.buckets (id, name, public)
 values ('speech', 'speech', false)
 on conflict (id) do nothing;
 
+-- Pages finished by a digest run still in progress, so the next run can continue after a time-out.
+-- Private; the server also creates this bucket itself if it's missing.
+insert into storage.buckets (id, name, public)
+values ('digest-progress', 'digest-progress', false)
+on conflict (id) do nothing;
+
 -- Admin: accounts listed here see the Admin screen in the app and may start digest runs.
 -- Everyone else who signs in is a reader. Add or remove a row (email in lower case) to change who is admin.
 -- No policies on purpose: only the summarize Edge Function (service_role) reads these tables.

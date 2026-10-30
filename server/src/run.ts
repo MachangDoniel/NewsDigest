@@ -7,7 +7,7 @@ import { dhakaDate, parseDay, setPersonWatching, type Day } from "./papers/commo
 import { summarizePage, summarizeStories } from "./gemini.js";
 import { merge } from "./merge.js";
 import { pagePrompt, storiesPrompt, type DigestLang } from "./prompt.js";
-import { hasDigest, logUsage, saveDigest, saveStatus, type RunState } from "./supabase.js";
+import { clearProgress, hasDigest, loadProgress, logUsage, saveDigest, saveProgress, saveStatus, type Progress, type RunState } from "./supabase.js";
 import {
   CATEGORIES,
   ChallengeError,
@@ -123,7 +123,15 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], day: D
 
   const delay = Number(process.env.GEMINI_DELAY_SECONDS || 7) * 1000;
   const summaries: PageSummary[] = [];
+  // Continue where an earlier run stopped; --force starts over.
+  const progress: Progress = !DRY && !FORCE ? await loadProgress(date, paper.id).catch(() => ({})) : {};
   for (const [i, p] of pages.entries()) {
+    const done = progress[p.pageId];
+    if (done) {
+      console.log(`  page ${p.pageNo} ${p.name}: already done in an earlier run`);
+      summaries.push(done);
+      continue;
+    }
     if (i > 0) await sleep(delay);
     const started = Date.now();
     try {
@@ -136,7 +144,11 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], day: D
       const n = s.sections.reduce((a, x) => a + x.items.length, 0);
       console.log(`  page ${p.pageNo} ${p.name}: ${n} items (from ${stories.length ? `text, ${stories.length} stories` : "image"})`);
       summaries.push(s);
-      if (!DRY) await logUsage(true, Date.now() - started);
+      if (!DRY) {
+        await logUsage(true, Date.now() - started);
+        progress[p.pageId] = s;
+        await saveProgress(date, paper.id, progress);
+      }
     } catch (e) {
       if (!DRY) await logUsage(false, Date.now() - started);
       // One bad page shouldn't sink the whole digest. If every AI key is out of quota,
@@ -158,6 +170,7 @@ async function runPaper(browser: Browser, paper: (typeof PAPERS)[number], day: D
   }
   await saveDigest({ date, paper: paper.id, ...digest, page_count: pages.length });
   await saveStatus({ date, paper: paper.id, state: "ok" });
+  await clearProgress(date, paper.id);
   console.log(`  saved ${digest.sections.length} sections, ${digest.mcqs.length} MCQs`);
 }
 

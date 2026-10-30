@@ -49,6 +49,9 @@ const RESPONSE_SCHEMA = {
 
 const pool = new KeyPool("GEMINI_API_KEYS", "GEMINI_API_KEY");
 
+// Slow but good answers have taken close to 3 minutes; past that, give up and try the next model.
+const REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_SECONDS || 180) * 1000;
+
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
 async function imageParts(image: { mime: string; data: Buffer }, prompt: string): Promise<Part[]> {
@@ -77,6 +80,7 @@ async function generateSummary(parts: Part[], model: string, backoff: boolean): 
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       }),
     { backoff },
   );
@@ -162,6 +166,7 @@ export async function groupDuplicatesGemini(prompt: string): Promise<number[][] 
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: { responseMimeType: "application/json", temperature: 0 },
           }),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         }),
       { backoff: false },
     );
