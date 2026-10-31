@@ -27,6 +27,9 @@ targets:
         SupabasePublishableKey: $(SUPABASE_PUBLISHABLE_KEY)
         UIBackgroundModes:
           - audio   # keep reading aloud with the screen locked
+          - fetch   # check for new digests, to notify
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.newsdigest.paper-check
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UISupportedInterfaceOrientations~ipad:

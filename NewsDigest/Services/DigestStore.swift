@@ -221,6 +221,13 @@ final class DigestStore: ObservableObject {
         }
     }
 
+    /// Papers the server has for this date.
+    func papers(on date: String) async throws -> [Paper] {
+        guard let client else { throw StoreError.notConfigured }
+        let data = try await client.from("digests").select("date,paper").eq("date", value: date).execute().data
+        return try decoder.decode([DigestKey].self, from: data).map(\.paper).sorted { $0.rawValue < $1.rawValue }
+    }
+
     /// Papers the server doesn't have for this date. Empty for today and for dates too old to check.
     func missingPapers(_ date: String) -> [Paper] {
         guard let coverage, pastDays(Self.coverageDays).contains(date) else { return [] }
