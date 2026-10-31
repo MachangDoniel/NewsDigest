@@ -25,3 +25,6 @@ server/out/
 supabase/.temp/
 
 .DS_Store
+
+## sherpa-onnx framework (scripts/fetch-sherpa-onnx.sh)
+Vendor/

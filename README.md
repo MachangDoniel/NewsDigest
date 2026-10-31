@@ -155,6 +155,10 @@ Edge Function secrets (Supabase → Edge Functions → Secrets). Commands for th
 | `GEMINI_TTS_VOICE`, `GEMINI_TTS_MODEL` | Optional. Voice (default `Kore`) and model |
 | `GH_DISPATCH_TOKEN`, `GH_REPO`, `GH_REF` | Run digest now |
 
+### Dashboards
+
+- **RevenueCat:** [project overview](https://app.revenuecat.com/projects/ab08322b/overview)
+
 ## Limitations
 
 - **Summaries can still contain mistakes.** Check key facts against **From the paper** or the page itself (tap **Page N**) before memorizing them. Stories that had to be read from a page image by the lighter model are marked with an orange warning.

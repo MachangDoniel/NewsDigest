@@ -5,15 +5,17 @@ import NaturalLanguage
 
 /// Reads a page's stories aloud, one story at a time. Uses the Gemini voice through the
 /// `speak` action of the `summarize` Edge Function, which makes each section once and keeps it,
-/// and falls back to Apple's built-in voices when that isn't available. Back/forward jump 5 seconds
-/// within the section being read, from the app or from the lock screen and headphones.
+/// or Kokoro on the phone for English, and falls back to Apple's built-in voices when neither is
+/// available. Back/forward jump 5 seconds within the section being read, from the app or from the
+/// lock screen and headphones.
 @MainActor
 final class SpeechReader: NSObject, ObservableObject,
     @preconcurrency AVSpeechSynthesizerDelegate, @preconcurrency AVAudioPlayerDelegate {
     static let voiceKey = "readAloudVoice"
-    /// Choices for Settings. "gemini" goes through the server; "apple" stays on the phone.
+    /// Choices for Settings. "gemini" goes through the server; "kokoro" and "apple" stay on the phone.
     static let voices: [(id: String, label: String)] = [
         ("gemini", "Gemini voice"),
+        ("kokoro", "Kokoro (on this phone)"),
         ("apple", "Apple voice (free, offline)"),
     ]
 
@@ -52,6 +54,10 @@ final class SpeechReader: NSObject, ObservableObject,
     private var fetches: [String: Task<Data?, Never>] = [:]
     /// After the Gemini voice fails, Apple's voice reads until this time, then Gemini is tried again.
     private var naturalOffUntil: Date?
+    /// Kokoro on the phone, loaded on the first English section and freed on stop.
+    private var kokoro: KokoroEngine?
+    /// Set when Kokoro fails, so the rest of this reading uses the other voices.
+    private var kokoroFailed = false
     private weak var store: DigestStore?
     private var title = ""
     private var commandsSet = false
@@ -62,7 +68,12 @@ final class SpeechReader: NSObject, ObservableObject,
     }
 
     private var voiceSetting: String { UserDefaults.standard.string(forKey: Self.voiceKey) ?? "gemini" }
+    /// Gemini reads unless Apple's voice is picked; with Kokoro picked it reads the Bangla stories.
     private var useNatural: Bool { voiceSetting != "apple" && (naturalOffUntil ?? .distantPast) <= .now }
+    /// The Kokoro voice to read English with, if Kokoro is picked and a voice pack is on the phone.
+    private var kokoroChoice: KokoroChoice? {
+        voiceSetting == "kokoro" && !kokoroFailed ? KokoroChoice.current : nil
+    }
 
     // MARK: - Controls
 
@@ -71,7 +82,15 @@ final class SpeechReader: NSObject, ObservableObject,
         self.title = title
         self.store = store
         note = nil
+        kokoroFailed = false
         guard !self.stories.isEmpty else { return }
+        if voiceSetting == "kokoro" {
+            if let choice = kokoroChoice {
+                engine(for: choice).warmUp()
+            } else {
+                note = "No Kokoro voice on this phone yet. Download one in Settings → Read aloud. Using the Gemini voice for now."
+            }
+        }
         Self.pruneCache()
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -166,6 +185,7 @@ final class SpeechReader: NSObject, ObservableObject,
         fetches.values.forEach { $0.cancel() }
         fetches = [:]
         stories = []
+        kokoro = nil  // frees the model's memory
         isPlaying = false
         problem = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -176,22 +196,29 @@ final class SpeechReader: NSObject, ObservableObject,
 
     private func play(story: Int) {
         index = story
-        chunks = Self.chunks(of: stories[story])
+        chunks = chunks(of: stories[story])
         chunk = 0
         speakChunk()
     }
 
+    /// Kokoro reads English stories in shorter sections: the phone makes each one before it
+    /// plays, so a short first section starts sooner.
+    private func chunks(of story: PaperStory) -> [String] {
+        let english = Self.language(of: story.headline + " " + story.body.prefix(300)) == "en"
+        return Self.chunks(of: story, limit: kokoroChoice != nil && english ? 200 : 450)
+    }
+
     /// Headline first, then the body in sections of about a paragraph. Gemini takes roughly
     /// 0.4 s per second of audio, so short sections start quickly and the next is ready in time.
-    private static func chunks(of story: PaperStory) -> [String] {
+    private static func chunks(of story: PaperStory, limit: Int) -> [String] {
         let sentences = story.body.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-            .flatMap { $0.count > 600 ? sentencesOf($0) : [$0] }
+            .flatMap { $0.count > limit + 150 ? sentencesOf($0) : [$0] }
         var out: [String] = story.headline.isEmpty ? [] : [story.headline]
         var piece = ""
         for p in sentences {
-            if !piece.isEmpty, piece.count + p.count > 450 { out.append(piece); piece = "" }
+            if !piece.isEmpty, piece.count + p.count > limit { out.append(piece); piece = "" }
             piece += piece.isEmpty ? p : "\n" + p
         }
         if !piece.isEmpty { out.append(piece) }
@@ -230,11 +257,14 @@ final class SpeechReader: NSObject, ObservableObject,
         let lang = Self.language(of: stories[index].headline + " " + text)
         isPlaying = true
         updateNowPlaying()
-        guard useNatural else { return speakWithApple(text, lang: lang, from: offset) }
+        let kokoroChoice = lang == "en" ? kokoroChoice : nil
+        guard kokoroChoice != nil || useNatural else { return speakWithApple(text, lang: lang, from: offset) }
 
         let token = token
         Task {
-            let data = await audio(for: text)
+            var data: Data?
+            if let kokoroChoice { data = await kokoroAudio(for: text, choice: kokoroChoice) }
+            if data == nil, useNatural { data = await audio(for: text) }
             guard token == self.token else { return }
             prefetchNext()
             guard let data, let player = try? AVAudioPlayer(data: data) else {
@@ -291,6 +321,42 @@ final class SpeechReader: NSObject, ObservableObject,
         advance()
     }
 
+    // MARK: - Kokoro
+
+    private func engine(for choice: KokoroChoice) -> KokoroEngine {
+        if let kokoro, kokoro.fits(choice) { return kokoro }
+        let engine = KokoroEngine(pack: choice.pack, accent: choice.voice.accent)
+        kokoro = engine
+        return engine
+    }
+
+    /// Kokoro's audio for a section: from this phone's cache, one being made, or made now.
+    private func kokoroAudio(for text: String, choice: KokoroChoice) async -> Data? {
+        let key = SHA256.hash(data: Data("\(choice.tag)|\(text)".utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = Self.cacheDir.appendingPathComponent(key + ".wav")
+        if let data = try? Data(contentsOf: file) { return data }
+        if let running = fetches[key] { return await running.value }
+
+        let engine = engine(for: choice)
+        let task = Task<Data?, Never> { [weak self] in
+            do {
+                let data = try await engine.wav(text, sid: choice.voice.sid)
+                try? FileManager.default.createDirectory(at: Self.cacheDir, withIntermediateDirectories: true)
+                try? data.write(to: file)
+                return data
+            } catch {
+                guard let self else { return nil }
+                kokoroFailed = true
+                note = error.localizedDescription + (useNatural ? " Using the Gemini voice." : " Using Apple's voice.")
+                return nil
+            }
+        }
+        fetches[key] = task
+        let data = await task.value
+        fetches[key] = nil
+        return data
+    }
+
     // MARK: - Natural voice
 
     /// The Gemini audio for a section: from this phone's cache, a fetch already on its way, or the
@@ -345,15 +411,22 @@ final class SpeechReader: NSObject, ObservableObject,
         return data
     }
 
-    /// Fetches the next two sections while this one plays, one at a time so the requests
-    /// don't pile up against Gemini's per-minute limit.
+    /// Fetches (or with Kokoro, makes) the next two sections while this one plays, one at a time
+    /// so the requests don't pile up against Gemini's per-minute limit.
     private func prefetchNext() {
-        guard useNatural else { return }
-        var upcoming = Array(chunks.dropFirst(chunk + 1))
-        if stories.indices.contains(index + 1) { upcoming += Self.chunks(of: stories[index + 1]) }
+        var upcoming: [(text: String, lang: String)] = chunks.dropFirst(chunk + 1).map { ($0, Self.language(of: $0)) }
+        if stories.indices.contains(index + 1) {
+            upcoming += chunks(of: stories[index + 1]).map { ($0, Self.language(of: $0)) }
+        }
         let next = Array(upcoming.prefix(2))
         Task {
-            for text in next where useNatural { _ = await audio(for: text) }
+            for (text, lang) in next {
+                if lang == "en", let choice = kokoroChoice {
+                    _ = await kokoroAudio(for: text, choice: choice)
+                } else if useNatural {
+                    _ = await audio(for: text)
+                }
+            }
         }
     }
 
