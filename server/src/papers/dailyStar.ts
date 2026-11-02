@@ -1,7 +1,7 @@
 import type { Browser, BrowserContext, Page } from "playwright";
 import { LoginError, NotPublishedError, type PageImage } from "../types.js";
 import { attachStories } from "./stories.js";
-import { assertNoChallenge, dhakaDate, downloadPages, type Day, type TagList } from "./common.js";
+import { assertNoChallenge, dhakaDate, downloadPages, signInWithRetry, type Day, type TagList } from "./common.js";
 
 const BASE = "https://epaper.thedailystar.net";
 const LOGIN_URL = "https://profile.thedailystar.net/login?redirect_to=https://epaper.thedailystar.net/Login/LandingPage";
@@ -17,20 +17,16 @@ async function signIn(context: BrowserContext): Promise<Page> {
   const password = process.env.DAILYSTAR_PASSWORD;
   if (!email || !password) throw new LoginError("DAILYSTAR_EMAIL / DAILYSTAR_PASSWORD are not set");
 
-  const page = await context.newPage();
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
-  await assertNoChallenge(page);
-  await page.fill('input[placeholder="Email"]', email);
-  await page.fill('input[type="password"]', password);
-  await Promise.all([
-    page.waitForURL((u) => !u.hostname.startsWith("profile."), { timeout: 45_000 }).catch(() => undefined),
-    page.getByRole("button", { name: /sign in/i }).first().click(),
-  ]);
-  await assertNoChallenge(page);
-  if (new URL(page.url()).hostname.startsWith("profile.")) {
-    throw new LoginError("Daily Star login failed. Check DAILYSTAR_EMAIL / DAILYSTAR_PASSWORD");
-  }
-  return page;
+  return signInWithRetry(context, {
+    paper: "Daily Star",
+    url: LOGIN_URL,
+    signedIn: (u) => !u.hostname.startsWith("profile."),
+    submit: async (p) => {
+      await p.fill('input[placeholder="Email"]', email);
+      await p.fill('input[type="password"]', password);
+      await p.getByRole("button", { name: /sign in/i }).first().click();
+    },
+  });
 }
 
 /** Prints the page structure to the job log so the scraper can be fixed when the site changes. */

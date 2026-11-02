@@ -13,6 +13,7 @@ import {
   ChallengeError,
   LoginError,
   NotPublishedError,
+  SignInUnavailableError,
   type Category,
   type DigestItem,
   type DigestSection,
@@ -181,7 +182,7 @@ async function main() {
   const override = process.env.DIGEST_LANG as DigestLang | "auto" | undefined;
   let browser = await chromium.launch();
   let failures = 0;
-  // A paper showing a bot check won't let us in for older dates either; leave it for a later run.
+  // A paper showing a bot check or not answering sign-in won't let us in for older dates either; leave it for a later run.
   const blocked = new Set<PaperId>();
   try {
     for (const day of days) {
@@ -207,7 +208,7 @@ async function main() {
           const state = stateFor(e);
           const message = (e as Error).message;
           console.error(`  ✗ ${state}: ${message}`);
-          if (state === "challenge") blocked.add(paper.id);
+          if (state === "challenge" || e instanceof SignInUnavailableError) blocked.add(paper.id);
           // Not published yet isn't a failure; a later scheduled run picks it up. Older dates
           // are shown as missing in the app's Archive, and a run stays green if only those failed.
           if (state !== "not_published" && date === today) failures++;
