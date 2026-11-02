@@ -1,7 +1,7 @@
 import type { Browser, BrowserContext } from "playwright";
 import { LoginError, NotPublishedError, type PageImage } from "../types.js";
 import { attachStories } from "./stories.js";
-import { assertNoChallenge, dhakaDate, downloadPages, readPageImageTags, type Day } from "./common.js";
+import { assertNoChallenge, dhakaDate, downloadPages, readPageImageTags, signInWithRetry, type Day } from "./common.js";
 import { loadSession } from "../session.js";
 
 const BASE = "https://epaper.prothomalo.com";
@@ -24,19 +24,16 @@ async function openContext(browser: Browser): Promise<BrowserContext> {
   }
 
   const context = await browser.newContext({ viewport });
-  const page = await context.newPage();
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
-  await assertNoChallenge(page);
-  await page.fill('input[name="email"]', email);
-  await page.fill('input[name="password"]', password);
-  await Promise.all([
-    page.waitForURL((u) => u.hostname === "epaper.prothomalo.com", { timeout: 45_000 }).catch(() => undefined),
-    page.getByRole("button", { name: /^login$/i }).click(),
-  ]);
-  await assertNoChallenge(page);
-  if (new URL(page.url()).hostname !== "epaper.prothomalo.com") {
-    throw new LoginError("Prothom Alo login failed. Check PROTHOMALO_EMAIL / PROTHOMALO_PASSWORD");
-  }
+  const page = await signInWithRetry(context, {
+    paper: "Prothom Alo",
+    url: LOGIN_URL,
+    signedIn: (u) => u.hostname === "epaper.prothomalo.com",
+    submit: async (p) => {
+      await p.fill('input[name="email"]', email);
+      await p.fill('input[name="password"]', password);
+      await p.getByRole("button", { name: /^login$/i }).click();
+    },
+  });
   await page.close();
   return context;
 }

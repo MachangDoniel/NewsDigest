@@ -69,6 +69,8 @@ export interface PageSummary {
 
 /** Login no longer valid: the user must refresh the saved session / credentials. */
 export class LoginError extends Error {}
+/** Sign-in never finished, with no answer on the login itself: the site is slow or down. */
+export class SignInUnavailableError extends Error {}
 /** The site asked for a CAPTCHA or OTP. We stop instead of trying to get around it. */
 export class ChallengeError extends Error {}
 /** Today's edition isn't up yet. */

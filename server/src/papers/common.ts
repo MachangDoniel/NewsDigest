@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from "playwright";
-import { ChallengeError, type PageImage } from "../types.js";
+import { ChallengeError, LoginError, SignInUnavailableError, type PageImage } from "../types.js";
 
 /** Today's date in Dhaka as { y, m, d } strings, zero-padded. */
 export function dhakaDate(date = new Date()) {
@@ -55,6 +55,50 @@ export async function assertNoChallenge(page: Page) {
     const { origin, pathname } = new URL(page.url());
     throw new ChallengeError(`CAPTCHA / bot check shown at ${origin}${pathname}`);
   }
+}
+
+const SIGN_IN_TRIES = 3;
+const SIGN_IN_RETRY_MS = Number(process.env.SIGN_IN_RETRY_SECONDS || 15) * 1000;
+const SIGN_IN_TIMEOUT_MS = Number(process.env.SIGN_IN_TIMEOUT_SECONDS || 45) * 1000;
+
+/**
+ * Opens the sign-in page, fills it in and submits, and returns the signed-in page.
+ * LoginError means the site turned the credentials down. A slow or failing site is retried, then
+ * thrown as SignInUnavailableError, so a bad night on their side doesn't read as an expired login.
+ */
+export async function signInWithRetry(
+  context: BrowserContext,
+  opts: { paper: string; url: string; signedIn: (u: URL) => boolean; submit: (page: Page) => Promise<void> },
+): Promise<Page> {
+  let last = "";
+  for (let attempt = 1; attempt <= SIGN_IN_TRIES; attempt++) {
+    const page = await context.newPage();
+    try {
+      await page.goto(opts.url, { waitUntil: "domcontentloaded" });
+      await assertNoChallenge(page);
+      const formHost = new URL(page.url()).hostname;
+      // The site answered the form with "no". 408 and 429 are it being busy, not a verdict on the login.
+      let rejected: number | undefined;
+      page.on("response", (res) => {
+        const status = res.status();
+        if (res.request().method() === "POST" && new URL(res.url()).hostname === formHost && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+          rejected = status;
+        }
+      });
+      await Promise.all([page.waitForURL(opts.signedIn, { timeout: SIGN_IN_TIMEOUT_MS }).catch(() => undefined), opts.submit(page)]);
+      await assertNoChallenge(page);
+      if (opts.signedIn(new URL(page.url()))) return page;
+      if (rejected) throw new LoginError(`${opts.paper} rejected the login (HTTP ${rejected})`);
+      last = `still on ${formHost} after ${SIGN_IN_TIMEOUT_MS / 1000}s`;
+    } catch (e) {
+      if (e instanceof LoginError || e instanceof ChallengeError) throw e;
+      last = (e as Error).message.split("\n")[0];
+    }
+    await page.close();
+    console.warn(`  sign-in try ${attempt}/${SIGN_IN_TRIES} failed: ${last}`);
+    if (attempt < SIGN_IN_TRIES) await new Promise((r) => setTimeout(r, SIGN_IN_RETRY_MS));
+  }
+  throw new SignInUnavailableError(`${opts.paper} sign-in didn't finish after ${SIGN_IN_TRIES} tries; the site may be slow or down (${last})`);
 }
 
 /**
